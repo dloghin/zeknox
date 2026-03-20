@@ -15,4 +15,4 @@ wrappers/cpp/depends/gmp
 wrappers/cpp/depends/*.xz
 scripts/generated/
 .ai_tasks/
-plonky2/
+plonky2
