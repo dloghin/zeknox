@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <utils/rusterror.h>
 #include <merkle/merkle.h>
+#include <merkle/hasher.hpp>
 
 #ifdef __cplusplus
 
@@ -17,7 +18,6 @@
 #include <ntt/ntt.h>
 
 static constexpr size_t SALT_SIZE = 4;
-static constexpr size_t NUM_HASH_OUT_ELTS = 4;
 
 class PolynomialBatchGPU {
 public:

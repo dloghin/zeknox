@@ -13,7 +13,7 @@
 
 #include "polynomial_batch.cuh"
 
-static inline size_t reverse_bits(size_t val, size_t bit_count) {
+static inline __host__ __device__ size_t reverse_bits(size_t val, size_t bit_count) {
     size_t result = 0;
     for (size_t i = 0; i < bit_count; i++) {
         result = (result << 1) | (val & 1);
