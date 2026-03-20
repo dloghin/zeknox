@@ -17,6 +17,7 @@
 #include <msm/msm.h>
 #endif
 #include <merkle/merkle.h>
+#include <prover/polynomial_batch.cuh>
 
 EXTERN RustError get_number_of_gpus(size_t *ngpus);
 

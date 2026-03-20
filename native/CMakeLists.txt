@@ -122,7 +122,8 @@ set(LIB_CUDA_SRC
     monolith/monolith.cu
     merkle/merkle.cu
     ntt/ntt.cu
-    utils/all_gpus.cu)
+    utils/all_gpus.cu
+    prover/polynomial_batch.cu)
 
 if (BUILD_MSM)
     list(APPEND LIB_CUDA_SRC msm/msm.cu)
