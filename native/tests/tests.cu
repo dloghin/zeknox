@@ -821,6 +821,404 @@ TEST(LIBCUDA, merkle_avx512_test3)
 }
 #endif // __AVX512__
 
+#ifdef USE_CUDA
+// ---------- PolynomialBatchGPU tests ----------
+
+#include <prover/polynomial_batch.cuh>
+#include <ntt/ntt.cuh>
+#include <ff/gl64_params.hpp>
+#include <utils/all_gpus.hpp>
+
+static void init_gpu_for_poly_batch(u32 max_log_degree)
+{
+    size_t n_gpus = ngpus();
+    for (size_t d = 0; d < n_gpus; d++) {
+        auto &gpu = select_gpu(d);
+        ntt::init_coset(gpu, max_log_degree, fr_t(GROUP_GENERATOR));
+        for (size_t k = 2; k <= max_log_degree; k++) {
+            ntt::init_twiddle_factors(gpu, k);
+        }
+    }
+}
+
+TEST(PolynomialBatch, from_coeffs_basic_sizes)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 3;
+    const bool BLINDING = false;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_coeffs[NUM_POLYS * DEGREE];
+    for (u32 p = 0; p < NUM_POLYS; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            host_coeffs[p * DEGREE + i] = (u64)(p + 1) * (i + 1) % cpp_gl64_t::MOD;
+        }
+    }
+
+    fr_t *gpu_coeffs;
+    CHECKCUDAERR(cudaMalloc(&gpu_coeffs, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_coeffs, host_coeffs,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    auto batch = PolynomialBatchGPU::from_coeffs(
+        gpu_coeffs, NUM_POLYS, LOG_DEGREE, RATE_BITS,
+        BLINDING, CAP_HEIGHT, 0);
+
+    size_t expected_domain = (size_t)1 << (LOG_DEGREE + RATE_BITS);
+    ASSERT_EQ(batch.num_leaves, expected_domain);
+    ASSERT_EQ(batch.leaf_size, (size_t)NUM_POLYS);
+    ASSERT_EQ(batch.cap_len, (size_t)(1 << CAP_HEIGHT));
+    ASSERT_EQ(batch.num_digests, 2 * (expected_domain - batch.cap_len));
+    ASSERT_NE(batch.lde_gpu, nullptr);
+    ASSERT_NE(batch.digests_gpu, nullptr);
+    ASSERT_NE(batch.cap_gpu, nullptr);
+
+    cudaFree(gpu_coeffs);
+}
+
+TEST(PolynomialBatch, from_coeffs_with_blinding)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 5;
+    const bool BLINDING = true;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_coeffs[NUM_POLYS * DEGREE];
+    for (u32 p = 0; p < NUM_POLYS; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            host_coeffs[p * DEGREE + i] = ((u64)(p * 13 + i * 7 + 42)) % cpp_gl64_t::MOD;
+        }
+    }
+
+    fr_t *gpu_coeffs;
+    CHECKCUDAERR(cudaMalloc(&gpu_coeffs, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_coeffs, host_coeffs,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    auto batch = PolynomialBatchGPU::from_coeffs(
+        gpu_coeffs, NUM_POLYS, LOG_DEGREE, RATE_BITS,
+        BLINDING, CAP_HEIGHT, 0);
+
+    ASSERT_EQ(batch.leaf_size, (size_t)(NUM_POLYS + SALT_SIZE));
+    ASSERT_EQ(batch.blinding, true);
+
+    cudaFree(gpu_coeffs);
+}
+
+TEST(PolynomialBatch, from_coeffs_merkle_cap_nonzero)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 2;
+    const u32 NUM_POLYS = 4;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_coeffs[NUM_POLYS * DEGREE];
+    for (u32 i = 0; i < NUM_POLYS * DEGREE; i++) {
+        host_coeffs[i] = ((u64)i * 12345 + 67890) % cpp_gl64_t::MOD;
+    }
+
+    fr_t *gpu_coeffs;
+    CHECKCUDAERR(cudaMalloc(&gpu_coeffs, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_coeffs, host_coeffs,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    auto batch = PolynomialBatchGPU::from_coeffs(
+        gpu_coeffs, NUM_POLYS, LOG_DEGREE, RATE_BITS,
+        false, CAP_HEIGHT, 0);
+
+    size_t cap_elems = batch.cap_len * NUM_HASH_OUT_ELTS;
+    std::vector<u64> host_cap(cap_elems, 0);
+    batch.copy_cap_to_host((fr_t *)host_cap.data(), cap_elems);
+
+    bool all_zero = true;
+    for (size_t i = 0; i < cap_elems; i++) {
+        if (host_cap[i] != 0) { all_zero = false; break; }
+    }
+    ASSERT_FALSE(all_zero) << "Merkle cap should contain non-zero hash values";
+
+    cudaFree(gpu_coeffs);
+}
+
+TEST(PolynomialBatch, from_coeffs_merkle_cpu_gpu_match)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 2;
+    const size_t DOMAIN_SIZE = (size_t)1 << (LOG_DEGREE + RATE_BITS);
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_coeffs[NUM_POLYS * DEGREE];
+    for (u32 p = 0; p < NUM_POLYS; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            host_coeffs[p * DEGREE + i] = ((u64)(p * 100 + i)) % cpp_gl64_t::MOD;
+        }
+    }
+
+    fr_t *gpu_coeffs;
+    CHECKCUDAERR(cudaMalloc(&gpu_coeffs, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_coeffs, host_coeffs,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    // Build on GPU via PolynomialBatchGPU
+    auto batch = PolynomialBatchGPU::from_coeffs(
+        gpu_coeffs, NUM_POLYS, LOG_DEGREE, RATE_BITS,
+        false, CAP_HEIGHT, 0);
+
+    // Copy LDE leaves back from GPU
+    size_t total_leaf_elems = DOMAIN_SIZE * NUM_POLYS;
+    std::vector<u64> gpu_leaves(total_leaf_elems);
+    CHECKCUDAERR(cudaMemcpy(gpu_leaves.data(), batch.lde_gpu,
+                            total_leaf_elems * sizeof(u64),
+                            cudaMemcpyDeviceToHost));
+
+    // Build Merkle tree on CPU from the same leaves for comparison
+    u64 n_caps_cpu = (u64)1 << CAP_HEIGHT;
+    u64 n_digests_cpu = 2 * (DOMAIN_SIZE - n_caps_cpu);
+
+    std::vector<u64> cpu_digests(n_digests_cpu * HASH_SIZE_U64, 0);
+    std::vector<u64> cpu_cap(n_caps_cpu * HASH_SIZE_U64, 0);
+
+    fill_digests_buf_linear_cpu(
+        cpu_digests.data(), cpu_cap.data(), gpu_leaves.data(),
+        n_digests_cpu, n_caps_cpu, DOMAIN_SIZE,
+        NUM_POLYS, CAP_HEIGHT, HashType::HashPoseidon);
+
+    // Copy GPU Merkle results to host
+    std::vector<u64> gpu_digests(n_digests_cpu * HASH_SIZE_U64, 0);
+    std::vector<u64> gpu_cap(n_caps_cpu * HASH_SIZE_U64, 0);
+    batch.copy_digests_to_host((fr_t *)gpu_digests.data(), n_digests_cpu * HASH_SIZE_U64);
+    batch.copy_cap_to_host((fr_t *)gpu_cap.data(), n_caps_cpu * HASH_SIZE_U64);
+
+    // Compare caps
+    for (size_t i = 0; i < n_caps_cpu * HASH_SIZE_U64; i++) {
+        ASSERT_EQ(cpu_cap[i], gpu_cap[i])
+            << "Cap mismatch at element " << i;
+    }
+
+    // Compare digests
+    for (size_t i = 0; i < n_digests_cpu * HASH_SIZE_U64; i++) {
+        ASSERT_EQ(cpu_digests[i], gpu_digests[i])
+            << "Digest mismatch at element " << i;
+    }
+
+    cudaFree(gpu_coeffs);
+}
+
+TEST(PolynomialBatch, from_values_basic)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 2;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_values[NUM_POLYS * DEGREE];
+    for (u32 p = 0; p < NUM_POLYS; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            host_values[p * DEGREE + i] = ((u64)(p + 1) * (i + 1) * 31) % cpp_gl64_t::MOD;
+        }
+    }
+
+    fr_t *gpu_values;
+    CHECKCUDAERR(cudaMalloc(&gpu_values, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_values, host_values,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    auto batch = PolynomialBatchGPU::from_values(
+        gpu_values, NUM_POLYS, LOG_DEGREE, RATE_BITS,
+        false, CAP_HEIGHT, 0);
+
+    size_t expected_domain = (size_t)1 << (LOG_DEGREE + RATE_BITS);
+    ASSERT_EQ(batch.num_leaves, expected_domain);
+    ASSERT_EQ(batch.leaf_size, (size_t)NUM_POLYS);
+    ASSERT_NE(batch.lde_gpu, nullptr);
+    ASSERT_NE(batch.cap_gpu, nullptr);
+
+    // Coefficients pointer should be the same as the input (IFFT was in-place)
+    ASSERT_EQ(batch.coeffs_gpu, gpu_values);
+
+    cudaFree(gpu_values);
+}
+
+TEST(PolynomialBatch, lde_values_offset_bit_reversal)
+{
+    PolynomialBatchGPU batch;
+    batch.degree_log = 3;
+    batch.rate_bits = 2;
+    batch.leaf_size = 5;
+
+    size_t step = 1 << (batch.rate_bits);
+
+    // index=0, step=4 -> raw=0, reversed=0 -> offset = 0*5 = 0
+    ASSERT_EQ(batch.lde_values_offset(0, step), (size_t)0);
+
+    // index=1, step=4 -> raw=4, bit-reverse 4 (=00100) in 5 bits -> 00100 reversed = 00100 = 4
+    // Actually: 4 in binary is 00100, reversed in 5 bits = 00100 = 4
+    size_t offset1 = batch.lde_values_offset(1, step);
+    ASSERT_EQ(offset1, 4 * 5);
+
+    // index=2, step=4 -> raw=8, bit-reverse 8 (=01000) in 5 bits = 00010 = 2
+    size_t offset2 = batch.lde_values_offset(2, step);
+    ASSERT_EQ(offset2, 2 * 5);
+}
+
+TEST(PolynomialBatch, move_semantics)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 2;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_coeffs[NUM_POLYS * DEGREE];
+    for (u32 i = 0; i < NUM_POLYS * DEGREE; i++) {
+        host_coeffs[i] = (u64)(i + 1) % cpp_gl64_t::MOD;
+    }
+
+    fr_t *gpu_coeffs;
+    CHECKCUDAERR(cudaMalloc(&gpu_coeffs, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_coeffs, host_coeffs,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    auto batch1 = PolynomialBatchGPU::from_coeffs(
+        gpu_coeffs, NUM_POLYS, LOG_DEGREE, RATE_BITS,
+        false, CAP_HEIGHT, 0);
+
+    fr_t *original_lde = batch1.lde_gpu;
+    fr_t *original_cap = batch1.cap_gpu;
+
+    // Move construct
+    PolynomialBatchGPU batch2(std::move(batch1));
+
+    ASSERT_EQ(batch1.lde_gpu, nullptr);
+    ASSERT_EQ(batch1.cap_gpu, nullptr);
+    ASSERT_EQ(batch2.lde_gpu, original_lde);
+    ASSERT_EQ(batch2.cap_gpu, original_cap);
+    ASSERT_EQ(batch2.num_polynomials, (size_t)NUM_POLYS);
+
+    // Move assign
+    PolynomialBatchGPU batch3;
+    batch3 = std::move(batch2);
+
+    ASSERT_EQ(batch2.lde_gpu, nullptr);
+    ASSERT_EQ(batch3.lde_gpu, original_lde);
+    ASSERT_EQ(batch3.num_leaves, (size_t)(1 << (LOG_DEGREE + RATE_BITS)));
+
+    cudaFree(gpu_coeffs);
+}
+
+TEST(PolynomialBatch, c_api_from_coeffs)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 3;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_coeffs[NUM_POLYS * DEGREE];
+    for (u32 i = 0; i < NUM_POLYS * DEGREE; i++) {
+        host_coeffs[i] = ((u64)i * 997 + 1) % cpp_gl64_t::MOD;
+    }
+
+    fr_t *gpu_coeffs;
+    CHECKCUDAERR(cudaMalloc(&gpu_coeffs, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_coeffs, host_coeffs,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    void *out_lde = nullptr, *out_digests = nullptr, *out_cap = nullptr;
+    uint64_t out_num_leaves = 0, out_leaf_size = 0, out_num_digests = 0, out_cap_len = 0;
+
+    RustError err = polynomial_batch_from_coeffs(
+        0, gpu_coeffs, NUM_POLYS, LOG_DEGREE, RATE_BITS, 0, CAP_HEIGHT,
+        &out_lde, &out_digests, &out_cap,
+        &out_num_leaves, &out_leaf_size, &out_num_digests, &out_cap_len);
+
+    ASSERT_EQ(err.code, 0);
+    ASSERT_NE(out_lde, nullptr);
+    ASSERT_NE(out_digests, nullptr);
+    ASSERT_NE(out_cap, nullptr);
+    ASSERT_EQ(out_num_leaves, (uint64_t)(1 << (LOG_DEGREE + RATE_BITS)));
+    ASSERT_EQ(out_leaf_size, (uint64_t)NUM_POLYS);
+    ASSERT_EQ(out_cap_len, (uint64_t)(1 << CAP_HEIGHT));
+
+    cudaFree(out_lde);
+    cudaFree(out_digests);
+    cudaFree(out_cap);
+    cudaFree(gpu_coeffs);
+}
+
+TEST(PolynomialBatch, c_api_from_values)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1 << LOG_DEGREE;
+    const u32 RATE_BITS = 3;
+    const u32 CAP_HEIGHT = 1;
+    const u32 NUM_POLYS = 2;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 host_values[NUM_POLYS * DEGREE];
+    for (u32 i = 0; i < NUM_POLYS * DEGREE; i++) {
+        host_values[i] = ((u64)i * 53 + 7) % cpp_gl64_t::MOD;
+    }
+
+    fr_t *gpu_values;
+    CHECKCUDAERR(cudaMalloc(&gpu_values, NUM_POLYS * DEGREE * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(gpu_values, host_values,
+                            NUM_POLYS * DEGREE * sizeof(fr_t),
+                            cudaMemcpyHostToDevice));
+
+    void *out_lde = nullptr, *out_digests = nullptr, *out_cap = nullptr, *out_coeffs = nullptr;
+    uint64_t out_num_leaves = 0, out_leaf_size = 0, out_num_digests = 0, out_cap_len = 0;
+
+    RustError err = polynomial_batch_from_values(
+        0, gpu_values, NUM_POLYS, LOG_DEGREE, RATE_BITS, 0, CAP_HEIGHT,
+        &out_lde, &out_digests, &out_cap, &out_coeffs,
+        &out_num_leaves, &out_leaf_size, &out_num_digests, &out_cap_len);
+
+    ASSERT_EQ(err.code, 0);
+    ASSERT_NE(out_lde, nullptr);
+    ASSERT_NE(out_cap, nullptr);
+    ASSERT_EQ(out_num_leaves, (uint64_t)(1 << (LOG_DEGREE + RATE_BITS)));
+    ASSERT_EQ(out_leaf_size, (uint64_t)NUM_POLYS);
+    // coeffs pointer should be the same as input (IFFT in-place)
+    ASSERT_EQ(out_coeffs, (void *)gpu_values);
+
+    cudaFree(out_lde);
+    cudaFree(out_digests);
+    cudaFree(out_cap);
+    cudaFree(gpu_values);
+}
+
+#endif // USE_CUDA
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

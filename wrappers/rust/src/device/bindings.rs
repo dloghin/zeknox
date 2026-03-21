@@ -18,6 +18,7 @@ pub enum cudaError {
     cudaErrorProfilerAlreadyStarted = 7,
     cudaErrorProfilerAlreadyStopped = 8,
     cudaErrorInvalidConfiguration = 9,
+    cudaErrorVersionTranslation = 10,
     cudaErrorInvalidPitchValue = 12,
     cudaErrorInvalidSymbol = 13,
     cudaErrorInvalidHostPointer = 16,
@@ -140,6 +141,7 @@ pub enum cudaError {
     cudaErrorFunctionNotLoaded = 913,
     cudaErrorInvalidResourceType = 914,
     cudaErrorInvalidResourceConfiguration = 915,
+    cudaErrorStreamDetached = 917,
     cudaErrorUnknown = 999,
     cudaErrorApiFailureBase = 10000,
 }
