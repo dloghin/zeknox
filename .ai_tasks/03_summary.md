@@ -14,7 +14,7 @@ Work is on branch **`feat/gl64-ext2`** (from **`dev`**), committed, and pushed t
 - **`primitive_root_of_unity(n_log)`:** Uses Plonky2’s extension **power-of-two generator** imaginary limb `15659105665374529263` (real part `0`), with extension **two-adicity** `33` (`32 + 1`), i.e. `base.exp_power_of_2(33 - n_log)` as in `Field::primitive_root_of_unity` / `EXT_POWER_OF_TWO_GENERATOR` in `goldilocks_extensions.rs`.
 - **Base inverse (`inv_base`):** Fermat exponentiation `a^(p-2) mod p` (binary square-and-multiply), shared by host `cpp_gl64_t` and device `gl64_t`.
 - **Additive negation (`neg_gl64`):** Canonical `MOD - v` for `v ≠ 0`. Used for `neg()` and the imaginary part of `inverse()`. Relying on `cpp_gl64_t`’s `zero() - x` for negation was observed to be off by **`EPSILON` (`2^32 - 1`)** in some cases relative to true field negation; canonical negation avoids that.
-- **Includes:** `ff/goldilocks.hpp` (which pulls `ff/gl64_t.cuh`); when `USE_CUDA` is off, `typedef cpp_gl64_t gl64_t` is provided for the same pattern as elsewhere in the tree.
+- **Includes:** `ff/gl64_t.cuh` then `ff/goldilocks.hpp` (explicit base-field header plus extension helpers); when `USE_CUDA` is off, `typedef cpp_gl64_t gl64_t` is provided for the same pattern as elsewhere in the tree.
 - **Host/device:** `GL64_EXT2_HD` / `GL64_EXT2_INLINE` map to `__host__ __device__` under CUDA/HIP.
 
 ### `native/tests/tests.cu`
