@@ -125,7 +125,9 @@ set(LIB_CUDA_SRC
     ntt/ntt.cu
     utils/all_gpus.cu
     prover/polynomial_batch.cu
-    prover/partial_products.cu)
+    prover/partial_products.cu
+    prover/gate_constraints.cu
+    prover/quotient_poly.cu)
 
 if (BUILD_MSM)
     list(APPEND LIB_CUDA_SRC msm/msm.cu)

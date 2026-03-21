@@ -934,6 +934,9 @@ TEST(Gl64Ext2, scalar_mul)
 
 #include <prover/polynomial_batch.cuh>
 #include <prover/partial_products.cuh>
+#include <prover/gate_constraints.cuh>
+#include <prover/quotient_poly.cuh>
+#include <ff/gl64_params.hpp>
 #include <ntt/ntt.cuh>
 #include <ff/gl64_params.hpp>
 #include <utils/all_gpus.hpp>
@@ -1573,6 +1576,184 @@ TEST_F(PartialProducts_AllChunkProductsOneImpliesZOne, all_chunk_products_one_im
         ASSERT_EQ(gpu_z[i], ref_z[i]);
         ASSERT_EQ(gpu_z[i], 1ULL) << "Z should stay 1 when each row's chunk product is 1";
     }
+}
+
+// ---------- Quotient polynomial + gate constraints ----------
+
+TEST(QuotientPoly, precompute_z_h_inverse_matches_cpu)
+{
+    const uint32_t lde_log = 4;
+    const size_t lde_size = (size_t)1 << lde_log;
+    const uint32_t degree_bits = 2;
+    const u64 coset_shift = GROUP_GENERATOR;
+    const u64 omega_lde = OMEGA[lde_log];
+
+    std::vector<u64> ref_z(lde_size);
+    quotient_precompute_z_h_inverse_cpu(
+        coset_shift, omega_lde, lde_log, degree_bits, ref_z.data(), lde_size);
+
+    u64 *d_z;
+    CHECKCUDAERR(cudaMalloc(&d_z, lde_size * sizeof(u64)));
+    launch_precompute_z_h_inverse(
+        coset_shift, omega_lde, lde_log, degree_bits, d_z, (size_t)lde_size, 0);
+
+    std::vector<u64> gpu_z(lde_size);
+    CHECKCUDAERR(cudaMemcpy(gpu_z.data(), d_z, lde_size * sizeof(u64), cudaMemcpyDeviceToHost));
+    cudaFree(d_z);
+
+    for (size_t i = 0; i < lde_size; ++i) {
+        ASSERT_EQ(gpu_z[i], ref_z[i]) << "z_h_inv mismatch at " << i;
+    }
+}
+
+TEST(GateConstraints, arithmetic_gate_matches_cpu_reference)
+{
+    const size_t num_points = 32;
+    const size_t num_constants = 2;
+    const size_t num_wires = 4;
+
+    std::vector<u64> constants(num_points * num_constants);
+    std::vector<u64> wires(num_points * num_wires);
+    for (size_t i = 0; i < num_points; ++i) {
+        constants[i * num_constants + 0] = ((u64)i * 3 + 1) % GL_MOD;
+        constants[i * num_constants + 1] = ((u64)i * 5 + 2) % GL_MOD;
+        wires[i * num_wires + 0] = ((u64)i + 7) % GL_MOD;
+        wires[i * num_wires + 1] = ((u64)i + 11) % GL_MOD;
+        wires[i * num_wires + 2] = ((u64)i + 13) % GL_MOD;
+        wires[i * num_wires + 3] = ((u64)i + 17) % GL_MOD;
+    }
+
+    std::vector<u64> ref_out(num_points);
+    gate_constraints_arithmetic_cpu_reference(
+        constants.data(), wires.data(), num_points, num_constants, num_wires,
+        0, 1, 2, 3, 0, 1, ref_out.data());
+
+    u64 *d_c, *d_w, *d_acc;
+    CHECKCUDAERR(cudaMalloc(&d_c, constants.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_w, wires.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_acc, num_points * sizeof(u64)));
+    CHECKCUDAERR(cudaMemcpy(d_c, constants.data(), constants.size() * sizeof(u64), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_w, wires.data(), wires.size() * sizeof(u64), cudaMemcpyHostToDevice));
+
+    launch_eval_arithmetic_gate_constraints(
+        d_c, d_w, num_points, num_constants, num_wires,
+        0, 1, 2, 3, 0, 1,
+        0, d_acc, 1, 0);
+
+    std::vector<u64> gpu_out(num_points);
+    CHECKCUDAERR(cudaMemcpy(gpu_out.data(), d_acc, num_points * sizeof(u64), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < num_points; ++i) {
+        ASSERT_EQ(gpu_out[i], ref_out[i]) << "arithmetic gate mismatch at " << i;
+    }
+
+    cudaFree(d_c);
+    cudaFree(d_w);
+    cudaFree(d_acc);
+}
+
+TEST(GateConstraints, constant_gate_matches_cpu_reference)
+{
+    const size_t num_points = 16;
+    const size_t num_constants = 1;
+    const size_t num_wires = 2;
+
+    std::vector<u64> constants(num_points * num_constants);
+    std::vector<u64> wires(num_points * num_wires);
+    for (size_t i = 0; i < num_points; ++i) {
+        constants[i] = ((u64)i * 19 + 3) % GL_MOD;
+        wires[i * num_wires + 0] = ((u64)i * 19 + 3) % GL_MOD;
+        wires[i * num_wires + 1] = 999;
+    }
+
+    std::vector<u64> ref_out(num_points);
+    gate_constraints_constant_cpu_reference(
+        constants.data(), wires.data(), num_points, num_constants, num_wires, 0, 0, ref_out.data());
+
+    u64 *d_c, *d_w, *d_acc;
+    CHECKCUDAERR(cudaMalloc(&d_c, constants.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_w, wires.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_acc, num_points * sizeof(u64)));
+    CHECKCUDAERR(cudaMemcpy(d_c, constants.data(), constants.size() * sizeof(u64), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_w, wires.data(), wires.size() * sizeof(u64), cudaMemcpyHostToDevice));
+
+    launch_eval_constant_gate_constraints(
+        d_c, d_w, num_points, num_constants, num_wires, 0, 0, 0, d_acc, 1, 0);
+
+    std::vector<u64> gpu_out(num_points);
+    CHECKCUDAERR(cudaMemcpy(gpu_out.data(), d_acc, num_points * sizeof(u64), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < num_points; ++i) {
+        ASSERT_EQ(gpu_out[i], ref_out[i]) << "constant gate mismatch at " << i;
+    }
+
+    cudaFree(d_c);
+    cudaFree(d_w);
+    cudaFree(d_acc);
+}
+
+TEST(QuotientPoly, eval_vanishing_poly_matches_cpu)
+{
+    const size_t lde_size = 8;
+    const size_t num_gate_constraints = 2;
+    const size_t num_challenges = 1;
+
+    std::vector<u64> gate(num_gate_constraints * lde_size);
+    for (size_t j = 0; j < num_gate_constraints; ++j) {
+        for (size_t i = 0; i < lde_size; ++i) {
+            gate[j * lde_size + i] = ((u64)(j + 1) * 100 + i * 7) % GL_MOD;
+        }
+    }
+    std::vector<u64> alpha_weights = {GL_MOD - 2, 12345678901234567ULL % GL_MOD};
+    std::vector<u64> extra(lde_size);
+    for (size_t i = 0; i < lde_size; ++i) {
+        extra[i] = (u64)(i + 1);
+    }
+
+    const uint32_t lde_log = 3;
+    const uint32_t degree_bits = 2;
+    std::vector<u64> z_h_inv(lde_size);
+    quotient_precompute_z_h_inverse_cpu(
+        GROUP_GENERATOR, OMEGA[lde_log], lde_log, degree_bits, z_h_inv.data(), lde_size);
+
+    std::vector<u64> ref_q(lde_size * num_challenges);
+    quotient_eval_vanishing_cpu(
+        gate.data(), num_gate_constraints, lde_size,
+        alpha_weights.data(), alpha_weights.size(),
+        extra.data(), 1,
+        z_h_inv.data(),
+        ref_q.data(), num_challenges);
+
+    u64 *d_gate, *d_alpha, *d_extra, *d_zh, *d_out;
+    CHECKCUDAERR(cudaMalloc(&d_gate, gate.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_alpha, alpha_weights.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_extra, extra.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_zh, z_h_inv.size() * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&d_out, lde_size * num_challenges * sizeof(u64)));
+
+    CHECKCUDAERR(cudaMemcpy(d_gate, gate.data(), gate.size() * sizeof(u64), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_alpha, alpha_weights.data(), alpha_weights.size() * sizeof(u64), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_extra, extra.data(), extra.size() * sizeof(u64), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_zh, z_h_inv.data(), z_h_inv.size() * sizeof(u64), cudaMemcpyHostToDevice));
+
+    launch_eval_vanishing_poly(
+        d_gate, num_gate_constraints, lde_size,
+        d_alpha, alpha_weights.size(),
+        d_extra, 1,
+        d_zh, d_out, num_challenges, 0);
+
+    std::vector<u64> gpu_q(lde_size * num_challenges);
+    CHECKCUDAERR(cudaMemcpy(gpu_q.data(), d_out, gpu_q.size() * sizeof(u64), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < lde_size; ++i) {
+        ASSERT_EQ(gpu_q[i], ref_q[i]) << "quotient mismatch at " << i;
+    }
+
+    cudaFree(d_gate);
+    cudaFree(d_alpha);
+    cudaFree(d_extra);
+    cudaFree(d_zh);
+    cudaFree(d_out);
 }
 
 #endif // USE_CUDA
