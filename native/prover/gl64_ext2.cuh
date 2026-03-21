@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ff/gl64_t.cuh"
 #include "ff/goldilocks.hpp"
 
 #if !defined(USE_CUDA)
