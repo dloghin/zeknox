@@ -20,11 +20,7 @@ struct ChallengerImpl {
         const size_t n = input_buffer.size();
         assert(n <= CHALLENGER_SPONGE_RATE);
 
-        GoldilocksField tmp[CHALLENGER_SPONGE_RATE];
-        for (size_t i = 0; i < n; ++i) {
-            tmp[i] = GoldilocksField(static_cast<u64>(input_buffer[i]));
-        }
-        perm.set_from_slice(tmp, n, 0);
+        perm.set_from_slice(input_buffer.data(), n, 0);
         input_buffer.clear();
 
         perm.permute();
