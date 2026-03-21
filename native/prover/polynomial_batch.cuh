@@ -77,6 +77,8 @@ public:
     void copy_digests_to_host(fr_t *host_digests, size_t max_elems) const;
 
 private:
+    void release() noexcept;
+
     void build_lde_and_merkle(size_t num_polys, size_t degree_log,
                               size_t rate_bits, bool blinding,
                               size_t cap_height, size_t gpu_id);
@@ -92,7 +94,7 @@ private:
 
 EXTERN_C RustError polynomial_batch_from_values(
     size_t device_id,
-    const void *values_gpu,
+    void *values_gpu,
     uint32_t num_polys,
     uint32_t degree_log,
     uint32_t rate_bits,

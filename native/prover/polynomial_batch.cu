@@ -31,11 +31,15 @@ PolynomialBatchGPU::PolynomialBatchGPU()
       degree_log(0), rate_bits(0), blinding(false), cap_height(0),
       gpu_id(0), owns_coeffs(false) {}
 
-PolynomialBatchGPU::~PolynomialBatchGPU() {
+void PolynomialBatchGPU::release() noexcept {
     if (lde_gpu)     { cudaFree(lde_gpu); }
     if (digests_gpu) { cudaFree(digests_gpu); }
     if (cap_gpu)     { cudaFree(cap_gpu); }
     if (owns_coeffs && coeffs_gpu) { cudaFree(coeffs_gpu); }
+}
+
+PolynomialBatchGPU::~PolynomialBatchGPU() {
+    release();
 }
 
 PolynomialBatchGPU::PolynomialBatchGPU(PolynomialBatchGPU &&other) noexcept
@@ -55,10 +59,7 @@ PolynomialBatchGPU::PolynomialBatchGPU(PolynomialBatchGPU &&other) noexcept
 
 PolynomialBatchGPU &PolynomialBatchGPU::operator=(PolynomialBatchGPU &&other) noexcept {
     if (this != &other) {
-        if (lde_gpu)     { cudaFree(lde_gpu); }
-        if (digests_gpu) { cudaFree(digests_gpu); }
-        if (cap_gpu)     { cudaFree(cap_gpu); }
-        if (owns_coeffs && coeffs_gpu) { cudaFree(coeffs_gpu); }
+        release();
 
         lde_gpu = other.lde_gpu;
         num_leaves = other.num_leaves;
@@ -156,8 +157,7 @@ void PolynomialBatchGPU::build_lde_and_merkle(
 
     size_t digests_alloc = (this->num_digests == 0 ? NUM_HASH_OUT_ELTS
                                                    : this->num_digests * NUM_HASH_OUT_ELTS);
-    size_t cap_alloc = (this->cap_len == 0 ? NUM_HASH_OUT_ELTS
-                                           : this->cap_len * NUM_HASH_OUT_ELTS);
+    size_t cap_alloc = this->cap_len * NUM_HASH_OUT_ELTS;
 
     CUDA_OK(cudaMalloc(&this->digests_gpu, digests_alloc * sizeof(fr_t)));
     CUDA_OK(cudaMalloc(&this->cap_gpu, cap_alloc * sizeof(fr_t)));
@@ -258,7 +258,7 @@ void PolynomialBatchGPU::copy_digests_to_host(fr_t *host_digests, size_t max_ele
 
 extern "C" RustError polynomial_batch_from_values(
     size_t device_id,
-    const void *values_gpu,
+    void *values_gpu,
     uint32_t num_polys,
     uint32_t degree_log,
     uint32_t rate_bits,
