@@ -88,7 +88,8 @@ set(LIB_CXX_SRC
     poseidon2/poseidon2.cu
     monolith/monolith.cu
     merkle/merkle.cpp
-    merkle/merkle_avx.cpp)
+    merkle/merkle_avx.cpp
+    prover/challenger.cpp)
 
 add_library(${LIB_CXX_NAME} OBJECT ${LIB_CXX_SRC})
 target_compile_definitions(${LIB_CXX_NAME} PRIVATE FEATURE_GOLDILOCKS)
@@ -204,7 +205,8 @@ set(LIB_CXX_SRC
     poseidon2/poseidon2.cu
     monolith/monolith.cu
     merkle/merkle.cpp
-    merkle/merkle_avx.cpp)
+    merkle/merkle_avx.cpp
+    prover/challenger.cpp)
 
 set_source_files_properties(${LIB_CXX_SRC} PROPERTIES LANGUAGE CXX)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
