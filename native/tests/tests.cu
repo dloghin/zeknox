@@ -34,8 +34,6 @@
 #include <sys/time.h>
 #endif // TIMING
 
-#define HASH_SIZE_U64 4
-
 #ifdef DEBUG
 void printhash(u64 *h)
 {
@@ -938,7 +936,6 @@ TEST(Gl64Ext2, scalar_mul)
 #include <prover/quotient_poly.cuh>
 #include <ff/gl64_params.hpp>
 #include <ntt/ntt.cuh>
-#include <ff/gl64_params.hpp>
 #include <utils/all_gpus.hpp>
 #include <vector>
 

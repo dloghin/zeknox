@@ -181,7 +181,7 @@ func FillDigestsBufLinearGPUWithGPUPtr(deviceID int, gpu_digests, gpu_caps, gpu_
 	return nil
 }
 
-func FillDigestsBufLinearMultiGPUWithGPUPtr(gpu_digests, gpu_caps, gpu_leaves unsafe.Pointer, nDigests, nCaps, nLeaves, leafSize, capH, hashType int) error {
+func FillDigestsBufLinearMultiGPUWithGPUPtr(deviceID int, gpu_digests, gpu_caps, gpu_leaves unsafe.Pointer, nDigests, nCaps, nLeaves, leafSize, capH, hashType int) error {
 	C.fill_digests_buf_linear_multigpu_with_gpu_ptr(
 		gpu_digests,
 		gpu_caps,
@@ -191,7 +191,8 @@ func FillDigestsBufLinearMultiGPUWithGPUPtr(gpu_digests, gpu_caps, gpu_leaves un
 		C.uint64_t(nLeaves),
 		C.uint64_t(leafSize),
 		C.uint64_t(capH),
-		C.uint64_t(hashType))
+		C.uint64_t(hashType),
+		C.uint64_t(deviceID))
 
 	return nil
 }

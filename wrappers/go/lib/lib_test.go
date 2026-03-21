@@ -235,7 +235,7 @@ func caseTestMerkleTreeBuildingOutputMultiGpu(t *testing.T, nLeaves int, nCaps i
 
 	gpuLeavesBuff.CopyFromHost(leaves)
 
-	FillDigestsBufLinearMultiGPUWithGPUPtr(gpuDigestsBuff.AsPtr(), gpuCapsBuff.AsPtr(), gpuLeavesBuff.AsPtr(), nDigests, nCaps, nLeaves, leafSize, capHeight, HashPoseidon)
+	FillDigestsBufLinearMultiGPUWithGPUPtr(0, gpuDigestsBuff.AsPtr(), gpuCapsBuff.AsPtr(), gpuLeavesBuff.AsPtr(), nDigests, nCaps, nLeaves, leafSize, capHeight, HashPoseidon)
 
 	gpuCapsBuff.CopyToHost(caps)
 	for j := 0; j < nCaps; j++ {
