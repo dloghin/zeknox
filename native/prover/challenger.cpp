@@ -27,10 +27,7 @@ struct ChallengerImpl {
 
         u64 out[CHALLENGER_SPONGE_WIDTH];
         perm.get_state_as_canonical_u64(out);
-        output_buffer.clear();
-        for (size_t i = 0; i < CHALLENGER_SPONGE_RATE; ++i) {
-            output_buffer.push_back(gl64_t(out[i]));
-        }
+        output_buffer.assign(out, out + CHALLENGER_SPONGE_RATE);
     }
 
     void observe_one(gl64_t elt)
