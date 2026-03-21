@@ -11,6 +11,7 @@
 #include <poseidon2/poseidon2.hpp>
 #include <poseidon/poseidon_bn128.hpp>
 #include <merkle/merkle.h>
+#include <prover/challenger.hpp>
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -820,6 +821,62 @@ TEST(LIBCUDA, merkle_avx512_test3)
     free(leaves_buf);
 }
 #endif // __AVX512__
+
+// Matches `plonky2::iop::challenger` golden vectors (PoseidonGoldilocksConfig / PoseidonHash).
+TEST(Challenger, matches_plonky2_golden_sequence)
+{
+    Challenger c;
+    gl64_t obs123[] = {gl64_t(1), gl64_t(2), gl64_t(3)};
+    c.observe_elements(obs123, 3);
+    EXPECT_EQ(c.get_challenge().get_val(), 12398646804117377360ULL);
+    EXPECT_EQ(c.get_challenge().get_val(), 15781308336284228359ULL);
+    EXPECT_EQ(c.get_challenge().get_val(), 17027997015668057891ULL);
+
+    gl64_t hash[NUM_HASH_OUT_ELTS] = {
+        gl64_t(0x1111111111111111ULL),
+        gl64_t(0x2222222222222222ULL),
+        gl64_t(0x3333333333333333ULL),
+        gl64_t(0x4444444444444444ULL),
+    };
+    c.observe_hash(hash);
+    EXPECT_EQ(c.get_challenge().get_val(), 9022853129066299401ULL);
+
+    Challenger c2;
+    gl64_t five = gl64_t(5);
+    for (int i = 0; i < 8; i++) {
+        c2.observe_elements(&five, 1);
+    }
+    EXPECT_EQ(c2.get_challenge().get_val(), 7649693084686076907ULL);
+
+    Challenger c3;
+    gl64_t seven = gl64_t(7);
+    for (int i = 0; i < 7; i++) {
+        c3.observe_elements(&seven, 1);
+    }
+    gl64_t ext[2];
+    c3.get_extension_challenge(ext);
+    EXPECT_EQ(ext[0].get_val(), 1733776922735066575ULL);
+    EXPECT_EQ(ext[1].get_val(), 14278721706576094811ULL);
+}
+
+TEST(Challenger, empty_then_squeeze_advances_state)
+{
+    Challenger c;
+    gl64_t z0 = c.get_challenge();
+    gl64_t z1 = c.get_challenge();
+    EXPECT_NE(z0.get_val(), z1.get_val());
+}
+
+TEST(Challenger, observe_rate_boundary_duplex)
+{
+    Challenger c;
+    gl64_t one = gl64_t(1);
+    for (int i = 0; i < 8; i++) {
+        c.observe_elements(&one, 1);
+    }
+    gl64_t a = c.get_challenge();
+    (void)a;
+}
 
 #ifdef USE_CUDA
 // ---------- PolynomialBatchGPU tests ----------
