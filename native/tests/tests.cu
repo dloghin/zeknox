@@ -1332,34 +1332,106 @@ TEST(PolynomialBatch, c_api_from_values)
 
 static constexpr u64 GL_MOD = 0xffffffff00000001ULL;
 
-TEST(PartialProducts, quotient_chunk_kernel_matches_cpu_reference)
+/** Shared GPU buffers + host wiring for PartialProducts tests (malloc in SetUp, free in TearDown). */
+class PartialProductsGpuFixtureBase : public ::testing::Test {
+protected:
+    size_t degree = 0;
+    size_t num_wires = 0;
+    size_t num_routed = 0;
+    size_t qdf = 0;
+    size_t num_chunks = 0;
+
+    std::vector<u64> wire;
+    std::vector<u64> sigma;
+    std::vector<u64> subgroup;
+    std::vector<u64> k_is;
+
+    u64 *d_wire = nullptr;
+    u64 *d_sigma = nullptr;
+    u64 *d_sub = nullptr;
+    u64 *d_k = nullptr;
+    u64 *d_chunk = nullptr;
+    u64 *d_z = nullptr;
+    u64 *d_partial = nullptr;
+
+    void setup_gpu_alloc_and_upload()
+    {
+        num_chunks = partial_products_num_chunks(num_routed, qdf);
+        ASSERT_EQ(wire.size(), degree * num_wires);
+        ASSERT_EQ(sigma.size(), degree * num_routed);
+        ASSERT_EQ(subgroup.size(), degree);
+        ASSERT_EQ(k_is.size(), num_routed);
+
+        CHECKCUDAERR(cudaMalloc(&d_wire, wire.size() * sizeof(u64)));
+        CHECKCUDAERR(cudaMalloc(&d_sigma, sigma.size() * sizeof(u64)));
+        CHECKCUDAERR(cudaMalloc(&d_sub, subgroup.size() * sizeof(u64)));
+        CHECKCUDAERR(cudaMalloc(&d_k, k_is.size() * sizeof(u64)));
+        CHECKCUDAERR(cudaMalloc(&d_chunk, degree * num_chunks * sizeof(u64)));
+        CHECKCUDAERR(cudaMalloc(&d_z, degree * sizeof(u64)));
+        CHECKCUDAERR(cudaMalloc(&d_partial, degree * num_chunks * sizeof(u64)));
+
+        CHECKCUDAERR(cudaMemcpy(d_wire, wire.data(), wire.size() * sizeof(u64), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_sigma, sigma.data(), sigma.size() * sizeof(u64), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_sub, subgroup.data(), subgroup.size() * sizeof(u64), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_k, k_is.data(), k_is.size() * sizeof(u64), cudaMemcpyHostToDevice));
+    }
+
+    void TearDown() override
+    {
+        cudaFree(d_wire);
+        d_wire = nullptr;
+        cudaFree(d_sigma);
+        d_sigma = nullptr;
+        cudaFree(d_sub);
+        d_sub = nullptr;
+        cudaFree(d_k);
+        d_k = nullptr;
+        cudaFree(d_chunk);
+        d_chunk = nullptr;
+        cudaFree(d_z);
+        d_z = nullptr;
+        cudaFree(d_partial);
+        d_partial = nullptr;
+    }
+};
+
+class PartialProducts_QuotientChunkKernelMatchesCpuReference : public PartialProductsGpuFixtureBase {
+protected:
+    u64 beta = 0;
+    u64 gamma = 0;
+
+    void SetUp() override
+    {
+        degree = 64;
+        num_wires = 8;
+        num_routed = 8;
+        qdf = 3;
+        beta = 12345678901234567890ULL % GL_MOD;
+        gamma = 9876543210987654321ULL % GL_MOD;
+
+        wire.resize(degree * num_wires);
+        sigma.resize(degree * num_routed);
+        subgroup.resize(degree);
+        k_is.resize(num_routed);
+        for (size_t i = 0; i < wire.size(); ++i) {
+            wire[i] = ((u64)i * 1315423911ULL + 17) % GL_MOD;
+        }
+        for (size_t i = 0; i < sigma.size(); ++i) {
+            sigma[i] = ((u64)i * 7919ULL + 42) % GL_MOD;
+        }
+        for (size_t i = 0; i < degree; ++i) {
+            subgroup[i] = ((u64)i * 1103515245ULL + 12345) % GL_MOD;
+        }
+        for (size_t j = 0; j < num_routed; ++j) {
+            k_is[j] = ((u64)(j + 1) * 2654435761ULL) % GL_MOD;
+        }
+
+        setup_gpu_alloc_and_upload();
+    }
+};
+
+TEST_F(PartialProducts_QuotientChunkKernelMatchesCpuReference, quotient_chunk_kernel_matches_cpu_reference)
 {
-    const size_t degree = 64;
-    const size_t num_wires = 8;
-    const size_t num_routed = 8;
-    const size_t qdf = 3;
-    const size_t num_chunks = partial_products_num_chunks(num_routed, qdf);
-
-    u64 beta = 12345678901234567890ULL % GL_MOD;
-    u64 gamma = 9876543210987654321ULL % GL_MOD;
-
-    std::vector<u64> wire(degree * num_wires);
-    std::vector<u64> sigma(degree * num_routed);
-    std::vector<u64> subgroup(degree);
-    std::vector<u64> k_is(num_routed);
-    for (size_t i = 0; i < wire.size(); ++i) {
-        wire[i] = ((u64)i * 1315423911ULL + 17) % GL_MOD;
-    }
-    for (size_t i = 0; i < sigma.size(); ++i) {
-        sigma[i] = ((u64)i * 7919ULL + 42) % GL_MOD;
-    }
-    for (size_t i = 0; i < degree; ++i) {
-        subgroup[i] = ((u64)i * 1103515245ULL + 12345) % GL_MOD;
-    }
-    for (size_t j = 0; j < num_routed; ++j) {
-        k_is[j] = ((u64)(j + 1) * 2654435761ULL) % GL_MOD;
-    }
-
     std::vector<u64> ref_chunk(degree * num_chunks);
     std::vector<u64> ref_z(degree);
     std::vector<u64> ref_partial(degree * num_chunks);
@@ -1368,20 +1440,6 @@ TEST(PartialProducts, quotient_chunk_kernel_matches_cpu_reference)
         beta, gamma,
         degree, num_wires, num_routed, qdf,
         ref_chunk.data(), ref_z.data(), ref_partial.data());
-
-    u64 *d_wire, *d_sigma, *d_sub, *d_k, *d_chunk, *d_z, *d_partial;
-    CHECKCUDAERR(cudaMalloc(&d_wire, wire.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_sigma, sigma.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_sub, subgroup.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_k, k_is.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_chunk, degree * num_chunks * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_z, degree * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_partial, degree * num_chunks * sizeof(u64)));
-
-    CHECKCUDAERR(cudaMemcpy(d_wire, wire.data(), wire.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_sigma, sigma.data(), sigma.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_sub, subgroup.data(), subgroup.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_k, k_is.data(), k_is.size() * sizeof(u64), cudaMemcpyHostToDevice));
 
     launch_compute_quotient_chunk_products(
         d_wire, d_sigma, d_sub, d_k,
@@ -1407,55 +1465,40 @@ TEST(PartialProducts, quotient_chunk_kernel_matches_cpu_reference)
     for (size_t i = 0; i < gpu_partial.size(); ++i) {
         ASSERT_EQ(gpu_partial[i], ref_partial[i]) << "partial mismatch at " << i;
     }
-
-    cudaFree(d_wire);
-    cudaFree(d_sigma);
-    cudaFree(d_sub);
-    cudaFree(d_k);
-    cudaFree(d_chunk);
-    cudaFree(d_z);
-    cudaFree(d_partial);
 }
 
-TEST(PartialProducts, z_starts_at_one_two_challenges_independent)
+class PartialProducts_ZStartsAtOneTwoChallenges : public PartialProductsGpuFixtureBase {
+protected:
+    void SetUp() override
+    {
+        degree = 32;
+        num_wires = 4;
+        num_routed = 4;
+        qdf = 2;
+
+        wire.resize(degree * num_wires);
+        sigma.resize(degree * num_routed);
+        subgroup.resize(degree);
+        k_is.resize(num_routed);
+        for (size_t i = 0; i < wire.size(); ++i) {
+            wire[i] = ((u64)i + 100) % GL_MOD;
+        }
+        for (size_t i = 0; i < sigma.size(); ++i) {
+            sigma[i] = ((u64)i + 200) % GL_MOD;
+        }
+        for (size_t i = 0; i < degree; ++i) {
+            subgroup[i] = ((u64)i + 300) % GL_MOD;
+        }
+        for (size_t j = 0; j < num_routed; ++j) {
+            k_is[j] = ((u64)j + 400) % GL_MOD;
+        }
+
+        setup_gpu_alloc_and_upload();
+    }
+};
+
+TEST_F(PartialProducts_ZStartsAtOneTwoChallenges, z_starts_at_one_two_challenges_independent)
 {
-    const size_t degree = 32;
-    const size_t num_wires = 4;
-    const size_t num_routed = 4;
-    const size_t qdf = 2;
-    const size_t num_chunks = partial_products_num_chunks(num_routed, qdf);
-
-    std::vector<u64> wire(degree * num_wires);
-    std::vector<u64> sigma(degree * num_routed);
-    std::vector<u64> subgroup(degree);
-    std::vector<u64> k_is(num_routed);
-    for (size_t i = 0; i < wire.size(); ++i) {
-        wire[i] = ((u64)i + 100) % GL_MOD;
-    }
-    for (size_t i = 0; i < sigma.size(); ++i) {
-        sigma[i] = ((u64)i + 200) % GL_MOD;
-    }
-    for (size_t i = 0; i < degree; ++i) {
-        subgroup[i] = ((u64)i + 300) % GL_MOD;
-    }
-    for (size_t j = 0; j < num_routed; ++j) {
-        k_is[j] = ((u64)j + 400) % GL_MOD;
-    }
-
-    u64 *d_wire, *d_sigma, *d_sub, *d_k, *d_chunk, *d_z, *d_partial;
-    CHECKCUDAERR(cudaMalloc(&d_wire, wire.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_sigma, sigma.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_sub, subgroup.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_k, k_is.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_chunk, degree * num_chunks * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_z, degree * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_partial, degree * num_chunks * sizeof(u64)));
-
-    CHECKCUDAERR(cudaMemcpy(d_wire, wire.data(), wire.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_sigma, sigma.data(), sigma.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_sub, subgroup.data(), subgroup.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_k, k_is.data(), k_is.size() * sizeof(u64), cudaMemcpyHostToDevice));
-
     for (int challenge = 0; challenge < 2; ++challenge) {
         u64 beta = ((u64)(challenge + 1) * 1111111111111111ULL) % GL_MOD;
         u64 gamma = ((u64)(challenge + 7) * 2222222222222222ULL) % GL_MOD;
@@ -1481,32 +1524,33 @@ TEST(PartialProducts, z_starts_at_one_two_challenges_independent)
             ref_chunk.data(), ref_z.data(), ref_partial.data());
         ASSERT_EQ(gpu_z[0], ref_z[0]);
     }
-
-    cudaFree(d_wire);
-    cudaFree(d_sigma);
-    cudaFree(d_sub);
-    cudaFree(d_k);
-    cudaFree(d_chunk);
-    cudaFree(d_z);
-    cudaFree(d_partial);
 }
 
-TEST(PartialProducts, all_chunk_products_one_implies_z_one)
+class PartialProducts_AllChunkProductsOneImpliesZOne : public PartialProductsGpuFixtureBase {
+protected:
+    u64 beta = 0;
+    u64 gamma = 0;
+
+    void SetUp() override
+    {
+        degree = 16;
+        num_wires = 2;
+        num_routed = 2;
+        qdf = 1;
+        beta = 3;
+        gamma = 5;
+
+        wire.assign(degree * num_wires, 1);
+        sigma.assign(degree * num_routed, 1);
+        subgroup.assign(degree, 1);
+        k_is.assign(num_routed, 1);
+
+        setup_gpu_alloc_and_upload();
+    }
+};
+
+TEST_F(PartialProducts_AllChunkProductsOneImpliesZOne, all_chunk_products_one_implies_z_one)
 {
-    const size_t degree = 16;
-    const size_t num_wires = 2;
-    const size_t num_routed = 2;
-    const size_t qdf = 1;
-    const size_t num_chunks = partial_products_num_chunks(num_routed, qdf);
-
-    std::vector<u64> wire(degree * num_wires, 1);
-    std::vector<u64> sigma(degree * num_routed, 1);
-    std::vector<u64> subgroup(degree, 1);
-    std::vector<u64> k_is(num_routed, 1);
-
-    u64 beta = 3;
-    u64 gamma = 5;
-
     std::vector<u64> ref_chunk(degree * num_chunks);
     std::vector<u64> ref_z(degree);
     std::vector<u64> ref_partial(degree * num_chunks);
@@ -1515,20 +1559,6 @@ TEST(PartialProducts, all_chunk_products_one_implies_z_one)
         beta, gamma,
         degree, num_wires, num_routed, qdf,
         ref_chunk.data(), ref_z.data(), ref_partial.data());
-
-    u64 *d_wire, *d_sigma, *d_sub, *d_k, *d_chunk, *d_z, *d_partial;
-    CHECKCUDAERR(cudaMalloc(&d_wire, wire.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_sigma, sigma.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_sub, subgroup.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_k, k_is.size() * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_chunk, degree * num_chunks * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_z, degree * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&d_partial, degree * num_chunks * sizeof(u64)));
-
-    CHECKCUDAERR(cudaMemcpy(d_wire, wire.data(), wire.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_sigma, sigma.data(), sigma.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_sub, subgroup.data(), subgroup.size() * sizeof(u64), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_k, k_is.data(), k_is.size() * sizeof(u64), cudaMemcpyHostToDevice));
 
     launch_compute_quotient_chunk_products(
         d_wire, d_sigma, d_sub, d_k,
@@ -1543,14 +1573,6 @@ TEST(PartialProducts, all_chunk_products_one_implies_z_one)
         ASSERT_EQ(gpu_z[i], ref_z[i]);
         ASSERT_EQ(gpu_z[i], 1ULL) << "Z should stay 1 when each row's chunk product is 1";
     }
-
-    cudaFree(d_wire);
-    cudaFree(d_sigma);
-    cudaFree(d_sub);
-    cudaFree(d_k);
-    cudaFree(d_chunk);
-    cudaFree(d_z);
-    cudaFree(d_partial);
 }
 
 #endif // USE_CUDA

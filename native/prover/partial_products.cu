@@ -33,14 +33,11 @@ __device__ static void batch_inv_denoms(
         prefix[j] = prefix[j - 1] * den[j];
     }
     gl64_t inv = gl64_t::one() / prefix[n - 1];
-    for (size_t i = n; i-- > 0;) {
-        if (i == 0) {
-            inv_out[0] = inv;
-        } else {
-            inv_out[i] = inv * prefix[i - 1];
-        }
+    for (size_t i = n - 1; i > 0; --i) {
+        inv_out[i] = inv * prefix[i - 1];
         inv = inv * den[i];
     }
+    inv_out[0] = inv;
 }
 
 __global__ void compute_quotient_chunk_products_kernel(
@@ -168,13 +165,11 @@ void compute_z_prefix_product_host(
     std::vector<uint64_t> h_partial(total_chunk);
     std::vector<uint64_t> h_z(degree);
 
-    cudaMemcpyAsync(
+    cudaMemcpy(
         h_chunk.data(),
         d_chunk_products,
         total_chunk * sizeof(uint64_t),
-        cudaMemcpyDeviceToHost,
-        stream);
-    cudaStreamSynchronize(stream);
+        cudaMemcpyDeviceToHost);
 
     using F = cpp_gl64_t;
     F z_row = F::one();
