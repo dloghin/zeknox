@@ -124,7 +124,8 @@ set(LIB_CUDA_SRC
     merkle/merkle.cu
     ntt/ntt.cu
     utils/all_gpus.cu
-    prover/polynomial_batch.cu)
+    prover/polynomial_batch.cu
+    prover/partial_products.cu)
 
 if (BUILD_MSM)
     list(APPEND LIB_CUDA_SRC msm/msm.cu)
