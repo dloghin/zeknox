@@ -12,6 +12,7 @@
 #include <poseidon/poseidon_bn128.hpp>
 #include <merkle/merkle.h>
 #include <prover/challenger.hpp>
+#include <prover/gl64_ext2.cuh>
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -876,6 +877,56 @@ TEST(Challenger, observe_rate_boundary_duplex)
     }
     gl64_t a = c.get_challenge();
     (void)a;
+}
+
+// Plonky2 QuadraticExtension<GoldilocksField>: (1+2x)(3+4x) = 59 + 10x
+TEST(Gl64Ext2, multiply_matches_plonky2)
+{
+    gl64_ext2_t a(gl64_t(1), gl64_t(2));
+    gl64_ext2_t b(gl64_t(3), gl64_t(4));
+    gl64_ext2_t c = a * b;
+    EXPECT_EQ(c.real.get_val(), 59ULL);
+    EXPECT_EQ(c.imag.get_val(), 10ULL);
+}
+
+TEST(Gl64Ext2, inverse_times_self_is_one)
+{
+    gl64_ext2_t x(gl64_t(3), gl64_t::zero());
+    gl64_ext2_t inv = gl64_ext2_t::inverse(x);
+    gl64_ext2_t p = x * inv;
+    EXPECT_EQ(p.real.get_val(), 1ULL);
+    EXPECT_EQ(p.imag.get_val(), 0ULL);
+
+    gl64_ext2_t y(gl64_t(12345), gl64_t(67890));
+    gl64_ext2_t invy = gl64_ext2_t::inverse(y);
+    gl64_ext2_t py = y * invy;
+    EXPECT_EQ(py.real.get_val(), 1ULL);
+    EXPECT_EQ(py.imag.get_val(), 0ULL);
+}
+
+TEST(Gl64Ext2, primitive_root_of_unity_order)
+{
+    for (size_t n_log = 1; n_log <= 8; n_log++) {
+        gl64_ext2_t root = gl64_ext2_t::primitive_root_of_unity(n_log);
+        gl64_ext2_t z = root.pow(1ULL << n_log);
+        EXPECT_TRUE(z == gl64_ext2_t::one());
+    }
+}
+
+TEST(Gl64Ext2, neg_and_sub)
+{
+    gl64_ext2_t a(gl64_t(3), gl64_t(5));
+    gl64_ext2_t n = gl64_ext2_t::neg(a);
+    gl64_ext2_t s = a + n;
+    EXPECT_TRUE(s == gl64_ext2_t::zero());
+}
+
+TEST(Gl64Ext2, scalar_mul)
+{
+    gl64_ext2_t a(gl64_t(2), gl64_t(3));
+    gl64_ext2_t b = gl64_t(3) * a;
+    EXPECT_EQ(b.real.get_val(), 6ULL);
+    EXPECT_EQ(b.imag.get_val(), 9ULL);
 }
 
 #ifdef USE_CUDA
