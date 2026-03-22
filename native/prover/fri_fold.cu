@@ -250,7 +250,6 @@ static RustError fri_ext2_coset_fft_forward(
     int blocks = (int)((n + (size_t)threads - 1) / (size_t)threads);
     fri_ext2_deinterleave<<<blocks, threads, 0, gpu>>>(coeffs_inout, scratch_split, n);
     CUDA_OK(cudaGetLastError());
-    CUDA_OK(cudaPeekAtLastError());
 
     RustError ce = ntt::init_coset(gpu, lg_domain_size, fr_t(shift.get_val()));
     if (ce.code != 0) {
@@ -284,21 +283,7 @@ FriCommitPhaseResult::FriCommitPhaseResult()
 
 FriCommitPhaseResult::~FriCommitPhaseResult()
 {
-    for (auto &t : trees) {
-        if (t.leaves_gpu) {
-            cudaFree(t.leaves_gpu);
-        }
-        if (t.digests_gpu) {
-            cudaFree(t.digests_gpu);
-        }
-        if (t.cap_gpu) {
-            cudaFree(t.cap_gpu);
-        }
-        t.leaves_gpu = nullptr;
-        t.digests_gpu = nullptr;
-        t.cap_gpu = nullptr;
-    }
-    trees.clear();
+    clear_merkle_trees(trees);
     if (final_coeffs_gpu) {
         cudaFree(final_coeffs_gpu);
         final_coeffs_gpu = nullptr;
@@ -318,8 +303,18 @@ FriCommitPhaseResult::FriCommitPhaseResult(FriCommitPhaseResult &&other) noexcep
 FriCommitPhaseResult &FriCommitPhaseResult::operator=(FriCommitPhaseResult &&other) noexcept
 {
     if (this != &other) {
-        this->~FriCommitPhaseResult();
-        new (this) FriCommitPhaseResult(std::move(other));
+        clear_merkle_trees(trees);
+        if (final_coeffs_gpu) {
+            cudaFree(final_coeffs_gpu);
+        }
+
+        trees = std::move(other.trees);
+        final_coeffs_gpu = other.final_coeffs_gpu;
+        final_num_ext_coeffs = other.final_num_ext_coeffs;
+        gpu_id = other.gpu_id;
+
+        other.final_coeffs_gpu = nullptr;
+        other.final_num_ext_coeffs = 0;
     }
     return *this;
 }
@@ -336,12 +331,15 @@ void fri_commit_phase(
     size_t gpu_id,
     FriCommitPhaseResult *out)
 {
-    if (!out || num_ext_coeffs == 0) {
-        return;
+    if (!out) {
+        throw cuda_error{-cudaErrorInvalidValue, "fri_commit_phase: out pointer is null"};
+    }
+    if (num_ext_coeffs == 0) {
+        throw cuda_error{-cudaErrorInvalidValue, "fri_commit_phase: num_ext_coeffs is zero"};
     }
     size_t n = num_ext_coeffs;
     if ((n & (n - 1)) != 0) {
-        return;
+        throw cuda_error{-cudaErrorInvalidValue, "fri_commit_phase: num_ext_coeffs is not a power of two"};
     }
     auto &gpu = select_gpu((int)gpu_id);
     gpu.select();
@@ -351,7 +349,8 @@ void fri_commit_phase(
     for (size_t ab : reduction_arity_bits) {
         size_t ar = (size_t)1 << ab;
         if (nc % ar != 0) {
-            return;
+            throw cuda_error{-cudaErrorInvalidValue,
+                "fri_commit_phase: reduction arity does not divide domain size evenly"};
         }
         nc /= ar;
     }
@@ -388,9 +387,6 @@ void fri_commit_phase(
         size_t max_n = n_work;
         const size_t scratch_fr_count = 2 * max_n;
         scratch_split = cuda_malloc_fr_count(scratch_fr_count);
-        if (scratch_split == nullptr) {
-            throw cuda_error{-cudaErrorMemoryAllocation, "scratch_split: cudaMalloc failed or returned null"};
-        }
 
         std::vector<fr_t> host_cap;
 
@@ -413,7 +409,6 @@ void fri_commit_phase(
                 launch_fri_prepare_merkle_leaves(
                     d_values, tree.leaves_gpu, n_work, lg_n, arity_bits, ext_degree, gpu);
                 CUDA_OK(cudaGetLastError());
-                CUDA_OK(cudaPeekAtLastError());
 
                 size_t digests_alloc = (tree.num_digests == 0 ? NUM_HASH_OUT_ELTS
                                                               : tree.num_digests * NUM_HASH_OUT_ELTS);
@@ -449,9 +444,6 @@ void fri_commit_phase(
                 challenger.get_extension_challenge(beta_host);
 
                 fr_t *beta_dev = cuda_malloc_fr_count(2);
-                if (beta_dev == nullptr) {
-                    throw cuda_error{-cudaErrorMemoryAllocation, "beta_dev: cudaMalloc failed or returned null"};
-                }
                 CUDA_OK(cudaMemcpy(beta_dev, beta_host, 2 * sizeof(fr_t), cudaMemcpyHostToDevice));
 
                 size_t folded_count = n_work / arity;
@@ -466,7 +458,6 @@ void fri_commit_phase(
                 shift = gl64_pow_u64(shift, (uint64_t)arity);
 
                 if (n_work == 1) {
-                    CUDA_OK(cudaMemcpy(d_values, d_coeffs, ext_degree * sizeof(fr_t), cudaMemcpyDeviceToDevice));
                     out->trees.push_back(tree);
                     tree.leaves_gpu = nullptr;
                     tree.digests_gpu = nullptr;

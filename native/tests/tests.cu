@@ -1910,8 +1910,128 @@ TEST(FriFold, fri_commit_phase_smoke)
     ASSERT_NE(res.final_coeffs_gpu, nullptr);
     ASSERT_GE(res.final_num_ext_coeffs, (size_t)1);
 
+    // Verify Merkle tree structure
+    ASSERT_EQ(res.trees[0].num_leaves, n / ((size_t)1 << arity_bits));
+    ASSERT_EQ(res.trees[0].leaf_size, ((size_t)1 << arity_bits) * 2);
+
+    // Verify final coefficients are readable and non-garbage
+    std::vector<fr_t> final_host(res.final_num_ext_coeffs * 2);
+    CHECKCUDAERR(cudaMemcpy(final_host.data(), res.final_coeffs_gpu,
+                            final_host.size() * sizeof(fr_t), cudaMemcpyDeviceToHost));
+    // Values should be valid Goldilocks field elements (< MOD)
+    for (size_t i = 0; i < final_host.size(); i++) {
+        ASSERT_LT(final_host[i].get_val(), GL_MOD)
+            << "final coeff out of field range at " << i;
+    }
+
     cudaFree(d_c);
     cudaFree(d_v);
+}
+
+TEST(FriFold, fri_commit_phase_multi_round)
+{
+    // n=16, two rounds: arity 2 then arity 2 => 16->8->4
+    const size_t n = 16;
+    const size_t cap_height = 1;
+    const size_t rate_bits = 1;
+
+    init_gpu_for_poly_batch(16);
+
+    std::vector<fr_t> hc(n * 2);
+    std::vector<fr_t> hv(n * 2);
+    for (size_t i = 0; i < n; i++) {
+        hc[i * 2] = fr_t((uint64_t)(i * 3 + 1));
+        hc[i * 2 + 1] = fr_t((uint64_t)(i * 5 + 7));
+        hv[i * 2] = fr_t((uint64_t)(i + 50));
+        hv[i * 2 + 1] = fr_t((uint64_t)(i + 100));
+    }
+
+    fr_t *d_c = nullptr;
+    fr_t *d_v = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_c, hc.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMalloc(&d_v, hv.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(d_c, hc.data(), hc.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_v, hv.data(), hv.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+
+    Challenger ch;
+    FriCommitPhaseResult res;
+    std::vector<size_t> arities = {1, 1};  // two rounds of arity-2 folding
+    fri_commit_phase(
+        d_c, d_v, n, arities,
+        rate_bits, cap_height, ch,
+        fr_t(GROUP_GENERATOR), 0, &res);
+
+    // Should produce 2 Merkle trees (one per round)
+    ASSERT_EQ(res.trees.size(), (size_t)2);
+    for (size_t i = 0; i < res.trees.size(); i++) {
+        ASSERT_NE(res.trees[i].leaves_gpu, nullptr) << "tree " << i << " leaves null";
+        ASSERT_NE(res.trees[i].cap_gpu, nullptr) << "tree " << i << " cap null";
+    }
+
+    // Round 0: 16 / 2 = 8 leaves
+    ASSERT_EQ(res.trees[0].num_leaves, (size_t)8);
+    // Round 1: 8 / 2 = 4 leaves
+    ASSERT_EQ(res.trees[1].num_leaves, (size_t)4);
+
+    // Final coefficients: 4 >> rate_bits(1) = 2
+    ASSERT_EQ(res.final_num_ext_coeffs, (size_t)2);
+    ASSERT_NE(res.final_coeffs_gpu, nullptr);
+
+    std::vector<fr_t> final_host(res.final_num_ext_coeffs * 2);
+    CHECKCUDAERR(cudaMemcpy(final_host.data(), res.final_coeffs_gpu,
+                            final_host.size() * sizeof(fr_t), cudaMemcpyDeviceToHost));
+    for (size_t i = 0; i < final_host.size(); i++) {
+        ASSERT_LT(final_host[i].get_val(), GL_MOD)
+            << "final coeff out of field range at " << i;
+    }
+
+    cudaFree(d_c);
+    cudaFree(d_v);
+}
+
+TEST(FriFold, fri_commit_phase_rejects_zero_coeffs)
+{
+    FriCommitPhaseResult res;
+    Challenger ch;
+    ASSERT_THROW(
+        fri_commit_phase(nullptr, nullptr, 0,
+                         std::vector<size_t>{1}, 1, 1, ch,
+                         fr_t(GROUP_GENERATOR), 0, &res),
+        cuda_error);
+}
+
+TEST(FriFold, fri_commit_phase_rejects_non_power_of_two)
+{
+    FriCommitPhaseResult res;
+    Challenger ch;
+    ASSERT_THROW(
+        fri_commit_phase(nullptr, nullptr, 7,
+                         std::vector<size_t>{1}, 1, 1, ch,
+                         fr_t(GROUP_GENERATOR), 0, &res),
+        cuda_error);
+}
+
+TEST(FriFold, fri_commit_phase_rejects_bad_arity)
+{
+    FriCommitPhaseResult res;
+    Challenger ch;
+    // n=8 with arity_bits=2 (arity=4) then arity_bits=2 again:
+    // 8/4=2, 2/4 doesn't divide evenly
+    ASSERT_THROW(
+        fri_commit_phase(nullptr, nullptr, 8,
+                         std::vector<size_t>{2, 2}, 1, 1, ch,
+                         fr_t(GROUP_GENERATOR), 0, &res),
+        cuda_error);
+}
+
+TEST(FriFold, fri_commit_phase_rejects_null_output)
+{
+    Challenger ch;
+    ASSERT_THROW(
+        fri_commit_phase(nullptr, nullptr, 8,
+                         std::vector<size_t>{3}, 1, 1, ch,
+                         fr_t(GROUP_GENERATOR), 0, nullptr),
+        cuda_error);
 }
 
 #endif // USE_CUDA
