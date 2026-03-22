@@ -1657,7 +1657,7 @@ TEST(GateConstraints, constant_gate_matches_cpu_reference)
     std::vector<u64> constants(num_points * num_constants);
     std::vector<u64> wires(num_points * num_wires);
     for (size_t i = 0; i < num_points; ++i) {
-        constants[i] = ((u64)i * 19 + 3) % GL_MOD;
+        constants[i * num_constants + 0] = ((u64)i * 19 + 3) % GL_MOD;
         wires[i * num_wires + 0] = ((u64)i * 19 + 3) % GL_MOD;
         wires[i * num_wires + 1] = 999;
     }
