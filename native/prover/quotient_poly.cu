@@ -11,6 +11,7 @@
 #ifdef USE_CUDA
 
 #include "utils/cuda_grid_limits.cuh"
+#include "utils/exception.cuh"
 #include "types/int_types.h"
 #include "ff/goldilocks.hpp"
 #include "prover/gl64_ext2.cuh"
@@ -114,10 +115,7 @@ __global__ void eval_vanishing_poly_kernel(
     }
     gl64_t zh = gl64_t(z_h_inv[i]);
     gl64_t q = acc * zh;
-    quotient_values_out[0 * lde_size + i] = (uint64_t)q;
-    for (size_t c = 1; c < num_challenges; ++c) {
-        quotient_values_out[c * lde_size + i] = 0;
-    }
+    quotient_values_out[i] = (uint64_t)q;
 }
 
 void launch_eval_vanishing_poly(
@@ -136,6 +134,8 @@ void launch_eval_vanishing_poly(
     if (lde_size == 0 || num_challenges == 0) {
         return;
     }
+    size_t out_bytes = num_challenges * lde_size * sizeof(uint64_t);
+    CUDA_OK(cudaMemsetAsync(d_quotient_values_out, 0, out_bytes, stream));
     int blocks = zeknox_cuda_grid_blocks_int(lde_size, (unsigned)QUOTIENT_KERNEL_BLOCK, "launch_eval_vanishing_poly");
     eval_vanishing_poly_kernel<<<blocks, QUOTIENT_KERNEL_BLOCK, 0, stream>>>(
         d_gate_constraint_values,

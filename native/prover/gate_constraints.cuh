@@ -47,8 +47,7 @@ __global__ void eval_arithmetic_gate_constraints(
     uint32_t const_c0,
     uint32_t const_c1,
     size_t constraint_row,
-    uint64_t *constraint_accumulator,
-    size_t num_gate_constraint_rows);
+    uint64_t *constraint_accumulator);
 
 /**
  * ConstantGate: a wire must equal a constant (per point).
@@ -63,8 +62,7 @@ __global__ void eval_constant_gate_constraints(
     uint32_t wire_idx,
     uint32_t const_idx,
     size_t constraint_row,
-    uint64_t *constraint_accumulator,
-    size_t num_gate_constraint_rows);
+    uint64_t *constraint_accumulator);
 
 void launch_eval_arithmetic_gate_constraints(
     const uint64_t *d_constants,

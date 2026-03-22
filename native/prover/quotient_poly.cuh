@@ -34,7 +34,8 @@ void launch_precompute_z_h_inverse(
 /**
  * Combine gate constraint rows with alpha_weights, add optional per-point extra terms, then multiply by z_h_inv.
  * Layout gate_constraint_values[row * lde_size + point] for row in [0, num_gate_constraints).
- * quotient_out[challenge * lde_size + point] — for now num_challenges must be 1 (placeholder for multi-challenge wiring).
+ * quotient_out[challenge * lde_size + point]. The launcher zeros the full output with cudaMemsetAsync, then the kernel
+ * writes challenge 0; unused challenges stay zero until wired.
  */
 __global__ void eval_vanishing_poly_kernel(
     const uint64_t *gate_constraint_values,

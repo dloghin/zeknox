@@ -27,11 +27,10 @@ __global__ void eval_arithmetic_gate_constraints(
     uint32_t const_c0,
     uint32_t const_c1,
     size_t constraint_row,
-    uint64_t *constraint_accumulator,
-    size_t num_gate_constraint_rows)
+    uint64_t *constraint_accumulator)
 {
     size_t i = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-    if (i >= num_points || constraint_row >= num_gate_constraint_rows) {
+    if (i >= num_points) {
         return;
     }
 
@@ -55,11 +54,10 @@ __global__ void eval_constant_gate_constraints(
     uint32_t wire_idx,
     uint32_t const_idx,
     size_t constraint_row,
-    uint64_t *constraint_accumulator,
-    size_t num_gate_constraint_rows)
+    uint64_t *constraint_accumulator)
 {
     size_t i = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-    if (i >= num_points || constraint_row >= num_gate_constraint_rows) {
+    if (i >= num_points) {
         return;
     }
 
@@ -86,7 +84,7 @@ void launch_eval_arithmetic_gate_constraints(
     size_t num_gate_constraint_rows,
     cudaStream_t stream)
 {
-    if (num_points == 0) {
+    if (num_points == 0 || constraint_row >= num_gate_constraint_rows) {
         return;
     }
     int blocks = zeknox_cuda_grid_blocks_int(num_points, (unsigned)GATE_KERNEL_BLOCK, "launch_eval_arithmetic_gate_constraints");
@@ -103,8 +101,7 @@ void launch_eval_arithmetic_gate_constraints(
         const_c0,
         const_c1,
         constraint_row,
-        d_constraint_accumulator,
-        num_gate_constraint_rows);
+        d_constraint_accumulator);
 }
 
 void launch_eval_constant_gate_constraints(
@@ -120,7 +117,7 @@ void launch_eval_constant_gate_constraints(
     size_t num_gate_constraint_rows,
     cudaStream_t stream)
 {
-    if (num_points == 0) {
+    if (num_points == 0 || constraint_row >= num_gate_constraint_rows) {
         return;
     }
     int blocks = zeknox_cuda_grid_blocks_int(num_points, (unsigned)GATE_KERNEL_BLOCK, "launch_eval_constant_gate_constraints");
@@ -133,8 +130,7 @@ void launch_eval_constant_gate_constraints(
         wire_idx,
         const_idx,
         constraint_row,
-        d_constraint_accumulator,
-        num_gate_constraint_rows);
+        d_constraint_accumulator);
 }
 
 #ifndef __CUDA_ARCH__
