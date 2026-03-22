@@ -244,6 +244,9 @@ static RustError fri_ext2_coset_fft_forward(
         return RustError{cudaErrorInvalidValue};
     }
     size_t n = (size_t)1 << lg_domain_size;
+    if (scratch_split == nullptr) {
+        return RustError{cudaErrorInvalidValue};
+    }
     int threads = 256;
     int blocks = (int)((n + (size_t)threads - 1) / (size_t)threads);
     fri_ext2_deinterleave<<<blocks, threads, 0, gpu>>>(coeffs_inout, scratch_split, n);
@@ -384,7 +387,11 @@ void fri_commit_phase(
         d_folded = cuda_malloc_fr_count(coeff_fr_count);
 
         size_t max_n = n_work;
-        scratch_split = cuda_malloc_fr_count(2 * max_n);
+        const size_t scratch_fr_count = 2 * max_n;
+        scratch_split = cuda_malloc_fr_count(scratch_fr_count);
+        if (scratch_split == nullptr) {
+            throw cuda_error{-cudaErrorMemoryAllocation, "scratch_split: cudaMalloc failed or returned null"};
+        }
 
         std::vector<fr_t> host_cap;
 
