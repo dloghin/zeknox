@@ -6,6 +6,7 @@
 #include <string>
 
 #include <utils/all_gpus.hpp>
+#include <utils/gpu_t.cuh>
 #include <utils/exception.cuh>
 #include <ff/goldilocks.hpp>
 
@@ -87,7 +88,8 @@ static std::vector<gl64_ext2_t> eval_contiguous(
     size_t poly_start,
     size_t poly_count,
     gl64_ext2_t point,
-    size_t gpu_id)
+    fr_t *d_scratch,
+    const gpu_t &gpu)
 {
     if (poly_count == 0) {
         return {};
@@ -96,24 +98,13 @@ static std::vector<gl64_ext2_t> eval_contiguous(
         throw cuda_error{-cudaErrorInvalidValue, "opening_set: coeffs_gpu is null"};
     }
     size_t degree = (size_t)1 << batch.degree_log;
-    if (degree == 0) {
-        throw cuda_error{-cudaErrorInvalidValue, "opening_set: degree is zero"};
-    }
-
-    auto &gpu = select_gpu((int)gpu_id);
-    gpu.select();
-
-    fr_t *d_out = nullptr;
-    CUDA_OK(cudaMalloc(&d_out, poly_count * 2 * sizeof(fr_t)));
 
     cudaStream_t stream = static_cast<cudaStream_t>(gpu);
     launch_eval_polynomials_at_point(
-        batch.coeffs_gpu, poly_start, poly_count, degree, point, d_out, stream);
-    CUDA_OK(cudaStreamSynchronize(stream));
+        batch.coeffs_gpu, poly_start, poly_count, degree, point, d_scratch, stream);
 
     std::vector<fr_t> host_flat(poly_count * 2);
-    CUDA_OK(cudaMemcpy(host_flat.data(), d_out, poly_count * 2 * sizeof(fr_t), cudaMemcpyDeviceToHost));
-    CUDA_OK(cudaFree(d_out));
+    CUDA_OK(cudaMemcpy(host_flat.data(), d_scratch, poly_count * 2 * sizeof(fr_t), cudaMemcpyDeviceToHost));
 
     std::vector<gl64_ext2_t> out;
     out.reserve(poly_count);
@@ -152,19 +143,45 @@ OpeningSet construct_opening_set(
     range_check("partial_products", partial_products_start, partial_products_end,
                 zs_partial_products.num_polynomials);
 
+    // Find the largest poly count across all eval calls to size a single scratch buffer.
+    size_t max_polys = constants_end - constants_start;
+    if (sigmas_end - sigmas_start > max_polys) max_polys = sigmas_end - sigmas_start;
+    if (wires.num_polynomials > max_polys) max_polys = wires.num_polynomials;
+    if (zs_end - zs_start > max_polys) max_polys = zs_end - zs_start;
+    if (partial_products_end - partial_products_start > max_polys)
+        max_polys = partial_products_end - partial_products_start;
+    if (quotient_polys.num_polynomials > max_polys) max_polys = quotient_polys.num_polynomials;
+
+    auto &gpu = select_gpu((int)gpu_id);
+    gpu.select();
+
+    fr_t *d_scratch = nullptr;
+    if (max_polys > 0) {
+        CUDA_OK(cudaMalloc(&d_scratch, max_polys * 2 * sizeof(fr_t)));
+    }
+
     gl64_ext2_t gz = g * zeta;
 
     OpeningSet out;
-    out.constants = eval_contiguous(constants_sigmas, constants_start,
-                                    constants_end - constants_start, zeta, gpu_id);
-    out.plonk_sigmas = eval_contiguous(constants_sigmas, sigmas_start,
-                                       sigmas_end - sigmas_start, zeta, gpu_id);
-    out.wires = eval_contiguous(wires, 0, wires.num_polynomials, zeta, gpu_id);
-    out.plonk_zs = eval_contiguous(zs_partial_products, zs_start, zs_end - zs_start, zeta, gpu_id);
-    out.partial_products =
-        eval_contiguous(zs_partial_products, partial_products_start,
-                        partial_products_end - partial_products_start, zeta, gpu_id);
-    out.plonk_zs_next = eval_contiguous(zs_partial_products, zs_start, zs_end - zs_start, gz, gpu_id);
-    out.quotient_polys = eval_contiguous(quotient_polys, 0, quotient_polys.num_polynomials, zeta, gpu_id);
+    try {
+        out.constants = eval_contiguous(constants_sigmas, constants_start,
+                                        constants_end - constants_start, zeta, d_scratch, gpu);
+        out.plonk_sigmas = eval_contiguous(constants_sigmas, sigmas_start,
+                                           sigmas_end - sigmas_start, zeta, d_scratch, gpu);
+        out.wires = eval_contiguous(wires, 0, wires.num_polynomials, zeta, d_scratch, gpu);
+        out.plonk_zs = eval_contiguous(zs_partial_products, zs_start,
+                                        zs_end - zs_start, zeta, d_scratch, gpu);
+        out.partial_products =
+            eval_contiguous(zs_partial_products, partial_products_start,
+                            partial_products_end - partial_products_start, zeta, d_scratch, gpu);
+        out.plonk_zs_next = eval_contiguous(zs_partial_products, zs_start,
+                                             zs_end - zs_start, gz, d_scratch, gpu);
+        out.quotient_polys = eval_contiguous(quotient_polys, 0,
+                                              quotient_polys.num_polynomials, zeta, d_scratch, gpu);
+    } catch (...) {
+        if (d_scratch) cudaFree(d_scratch);
+        throw;
+    }
+    if (d_scratch) cudaFree(d_scratch);
     return out;
 }

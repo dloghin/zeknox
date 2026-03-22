@@ -2156,7 +2156,7 @@ TEST(OpeningSet, construct_matches_cpu_horner)
         d_q, N_Q, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta(gl64_t(111111111ULL), gl64_t(222222222ULL));
-    gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE + RATE_BITS);
+    gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE);
     gl64_ext2_t gz = g * zeta;
 
     OpeningSet os = construct_opening_set(
@@ -2223,10 +2223,107 @@ TEST(OpeningSet, construct_rejects_bad_range)
     gl64_ext2_t zeta = gl64_ext2_t::one();
     gl64_ext2_t g = gl64_ext2_t::one();
 
+    // constants_end = 2 but batch has only 1 poly
     ASSERT_THROW(
         construct_opening_set(zeta, g, batch_cs, batch_w, batch_zp, batch_q,
                               0, 2, 0, 1, 0, 1, 0, 1, 0),
         cuda_error);
+
+    // sigmas: start > end
+    ASSERT_THROW(
+        construct_opening_set(zeta, g, batch_cs, batch_w, batch_zp, batch_q,
+                              0, 1, 1, 0, 0, 1, 0, 1, 0),
+        cuda_error);
+
+    cudaFree(d0);
+    cudaFree(d1);
+    cudaFree(d2);
+    cudaFree(d3);
+}
+
+TEST(OpeningSet, construct_rejects_degree_log_mismatch)
+{
+    const u32 LOG_DEGREE_A = 4;
+    const u32 LOG_DEGREE_B = 5;
+    const u32 RATE_BITS = 2;
+    const u32 CAP_HEIGHT = 1;
+    init_gpu_for_poly_batch(LOG_DEGREE_B + RATE_BITS);
+
+    u64 ha[1u << LOG_DEGREE_A];
+    u64 hb[1u << LOG_DEGREE_B];
+    for (u32 i = 0; i < (1u << LOG_DEGREE_A); i++) ha[i] = (u64)(i + 1);
+    for (u32 i = 0; i < (1u << LOG_DEGREE_B); i++) hb[i] = (u64)(i + 1);
+
+    fr_t *da, *db, *dc, *dd;
+    CHECKCUDAERR(cudaMalloc(&da, sizeof(ha)));
+    CHECKCUDAERR(cudaMalloc(&db, sizeof(hb)));
+    CHECKCUDAERR(cudaMalloc(&dc, sizeof(ha)));
+    CHECKCUDAERR(cudaMalloc(&dd, sizeof(ha)));
+    CHECKCUDAERR(cudaMemcpy(da, ha, sizeof(ha), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(db, hb, sizeof(hb), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dc, ha, sizeof(ha), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dd, ha, sizeof(ha), cudaMemcpyHostToDevice));
+
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(da, 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(db, 1, LOG_DEGREE_B, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(dc, 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(dd, 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
+
+    gl64_ext2_t zeta = gl64_ext2_t::one();
+    gl64_ext2_t g = gl64_ext2_t::one();
+
+    ASSERT_THROW(
+        construct_opening_set(zeta, g, batch_cs, batch_w, batch_zp, batch_q,
+                              0, 1, 0, 0, 0, 1, 0, 0, 0),
+        cuda_error);
+
+    cudaFree(da);
+    cudaFree(db);
+    cudaFree(dc);
+    cudaFree(dd);
+}
+
+TEST(OpeningSet, construct_handles_empty_ranges)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1u << LOG_DEGREE;
+    const u32 RATE_BITS = 2;
+    const u32 CAP_HEIGHT = 1;
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 h[DEGREE];
+    for (u32 i = 0; i < DEGREE; i++) h[i] = (u64)(i + 1);
+
+    fr_t *d0, *d1, *d2, *d3;
+    CHECKCUDAERR(cudaMalloc(&d0, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&d1, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&d2, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&d3, sizeof(h)));
+    CHECKCUDAERR(cudaMemcpy(d0, h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d1, h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d2, h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d3, h, sizeof(h), cudaMemcpyHostToDevice));
+
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(d0, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(d1, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(d2, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(d3, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+
+    gl64_ext2_t zeta(gl64_t(42ULL), gl64_t(7ULL));
+    gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE);
+
+    // Empty constants and sigmas ranges (start == end), valid zs and partial_products
+    OpeningSet os = construct_opening_set(
+        zeta, g, batch_cs, batch_w, batch_zp, batch_q,
+        0, 0, 0, 0, 0, 1, 0, 1, 0);
+
+    ASSERT_EQ(os.constants.size(), 0u);
+    ASSERT_EQ(os.plonk_sigmas.size(), 0u);
+    ASSERT_EQ(os.wires.size(), 1u);
+    ASSERT_EQ(os.plonk_zs.size(), 1u);
+    ASSERT_EQ(os.partial_products.size(), 1u);
+    ASSERT_EQ(os.plonk_zs_next.size(), 1u);
+    ASSERT_EQ(os.quotient_polys.size(), 1u);
 
     cudaFree(d0);
     cudaFree(d1);
