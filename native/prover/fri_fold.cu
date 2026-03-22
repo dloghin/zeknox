@@ -240,13 +240,12 @@ static RustError fri_ext2_coset_fft_forward(
     uint32_t lg_domain_size,
     cpp_gl64_t shift)
 {
-    if (lg_domain_size == 0) {
+    // `ntt::batch_ntt` rejects lg_domain_size == 0; do not compute n or launch kernels in that case.
+    if (lg_domain_size == 0U || scratch_split == nullptr) {
         return RustError{cudaErrorInvalidValue};
     }
-    size_t n = (size_t)1 << lg_domain_size;
-    if (scratch_split == nullptr) {
-        return RustError{cudaErrorInvalidValue};
-    }
+
+    const size_t n = (size_t)1U << lg_domain_size;
     int threads = 256;
     int blocks = (int)((n + (size_t)threads - 1) / (size_t)threads);
     fri_ext2_deinterleave<<<blocks, threads, 0, gpu>>>(coeffs_inout, scratch_split, n);
@@ -450,6 +449,9 @@ void fri_commit_phase(
                 challenger.get_extension_challenge(beta_host);
 
                 fr_t *beta_dev = cuda_malloc_fr_count(2);
+                if (beta_dev == nullptr) {
+                    throw cuda_error{-cudaErrorMemoryAllocation, "beta_dev: cudaMalloc failed or returned null"};
+                }
                 CUDA_OK(cudaMemcpy(beta_dev, beta_host, 2 * sizeof(fr_t), cudaMemcpyHostToDevice));
 
                 size_t folded_count = n_work / arity;
