@@ -38,6 +38,18 @@ static void cuda_malloc_bytes(void **ptr, size_t bytes)
     }
 }
 
+/// Allocate `count` `fr_t` elements on the device. When `count > 0`, checks allocation success and
+/// returns a non-null pointer or throws `cuda_error`. When `count == 0`, returns nullptr.
+static fr_t *cuda_malloc_fr_count(size_t count)
+{
+    if (count == 0) {
+        return nullptr;
+    }
+    void *p = nullptr;
+    cuda_malloc_bytes(&p, count * sizeof(fr_t));
+    return static_cast<fr_t *>(p);
+}
+
 static void free_merkle_tree(MerkleTreeGPU &t)
 {
     if (t.leaves_gpu) {
@@ -361,16 +373,18 @@ void fri_commit_phase(
 
     try {
         size_t n_work = n;
-        size_t flat = n_work * ext_degree * sizeof(fr_t);
-        cuda_malloc_bytes(reinterpret_cast<void **>(&d_coeffs), flat);
-        cuda_malloc_bytes(reinterpret_cast<void **>(&d_values), flat);
+        const size_t coeff_fr_count = n_work * ext_degree;
+        size_t flat = coeff_fr_count * sizeof(fr_t);
+
+        d_coeffs = cuda_malloc_fr_count(coeff_fr_count);
+        d_values = cuda_malloc_fr_count(coeff_fr_count);
         CUDA_OK(cudaMemcpy(d_coeffs, lde_coeffs_gpu, flat, cudaMemcpyDeviceToDevice));
         CUDA_OK(cudaMemcpy(d_values, lde_values_gpu, flat, cudaMemcpyDeviceToDevice));
 
-        cuda_malloc_bytes(reinterpret_cast<void **>(&d_folded), flat);
+        d_folded = cuda_malloc_fr_count(coeff_fr_count);
 
         size_t max_n = n_work;
-        cuda_malloc_bytes(reinterpret_cast<void **>(&scratch_split), 2 * max_n * sizeof(fr_t));
+        scratch_split = cuda_malloc_fr_count(2 * max_n);
 
         std::vector<fr_t> host_cap;
 
@@ -389,9 +403,7 @@ void fri_commit_phase(
                 }
                 tree.num_digests = 2 * (tree.num_leaves - tree.cap_len);
 
-                cuda_malloc_bytes(
-                    reinterpret_cast<void **>(&tree.leaves_gpu),
-                    tree.num_leaves * tree.leaf_size * sizeof(fr_t));
+                tree.leaves_gpu = cuda_malloc_fr_count(tree.num_leaves * tree.leaf_size);
                 launch_fri_prepare_merkle_leaves(
                     d_values, tree.leaves_gpu, n_work, lg_n, arity_bits, ext_degree, gpu);
                 CUDA_OK(cudaGetLastError());
@@ -400,8 +412,8 @@ void fri_commit_phase(
                 size_t digests_alloc = (tree.num_digests == 0 ? NUM_HASH_OUT_ELTS
                                                               : tree.num_digests * NUM_HASH_OUT_ELTS);
                 size_t cap_alloc = tree.cap_len * NUM_HASH_OUT_ELTS;
-                cuda_malloc_bytes(reinterpret_cast<void **>(&tree.digests_gpu), digests_alloc * sizeof(fr_t));
-                cuda_malloc_bytes(reinterpret_cast<void **>(&tree.cap_gpu), cap_alloc * sizeof(fr_t));
+                tree.digests_gpu = cuda_malloc_fr_count(digests_alloc);
+                tree.cap_gpu = cuda_malloc_fr_count(cap_alloc);
 
                 fill_digests_buf_linear_gpu_with_gpu_ptr(
                     (void *)tree.digests_gpu,
@@ -430,8 +442,7 @@ void fri_commit_phase(
                 fr_t beta_host[2];
                 challenger.get_extension_challenge(beta_host);
 
-                fr_t *beta_dev = nullptr;
-                cuda_malloc_bytes(reinterpret_cast<void **>(&beta_dev), 2 * sizeof(fr_t));
+                fr_t *beta_dev = cuda_malloc_fr_count(2);
                 CUDA_OK(cudaMemcpy(beta_dev, beta_host, 2 * sizeof(fr_t), cudaMemcpyHostToDevice));
 
                 size_t folded_count = n_work / arity;
@@ -492,7 +503,7 @@ void fri_commit_phase(
             trunc = n_work;
         }
 
-        cuda_malloc_bytes(reinterpret_cast<void **>(&d_final), trunc * ext_degree * sizeof(fr_t));
+        d_final = cuda_malloc_fr_count(trunc * ext_degree);
         CUDA_OK(cudaMemcpy(d_final, d_coeffs, trunc * ext_degree * sizeof(fr_t), cudaMemcpyDeviceToDevice));
         cudaFree(d_coeffs);
         d_coeffs = nullptr;
