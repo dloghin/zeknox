@@ -35,8 +35,8 @@ struct GateDescriptor {
  * Writes constraint value to constraint_accumulator[constraint_row * num_points + point].
  */
 __global__ void eval_arithmetic_gate_constraints(
-    const uint64_t *local_constants,
-    const uint64_t *local_wires,
+    const uint64_t *constants,
+    const uint64_t *wires,
     size_t num_points,
     size_t num_constants,
     size_t num_wires,
@@ -54,8 +54,8 @@ __global__ void eval_arithmetic_gate_constraints(
  * Constraint: `wire[wire_idx] - const[const_idx]`.
  */
 __global__ void eval_constant_gate_constraints(
-    const uint64_t *local_constants,
-    const uint64_t *local_wires,
+    const uint64_t *constants,
+    const uint64_t *wires,
     size_t num_points,
     size_t num_constants,
     size_t num_wires,

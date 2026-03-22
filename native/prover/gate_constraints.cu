@@ -15,8 +15,8 @@
 static constexpr int GATE_KERNEL_BLOCK = 256;
 
 __global__ void eval_arithmetic_gate_constraints(
-    const uint64_t *local_constants,
-    const uint64_t *local_wires,
+    const uint64_t *constants,
+    const uint64_t *wires,
     size_t num_points,
     size_t num_constants,
     size_t num_wires,
@@ -34,20 +34,20 @@ __global__ void eval_arithmetic_gate_constraints(
         return;
     }
 
-    gl64_t a = gl64_t(local_wires[i * num_wires + wire_a]);
-    gl64_t b = gl64_t(local_wires[i * num_wires + wire_b]);
-    gl64_t c = gl64_t(local_wires[i * num_wires + wire_c]);
-    gl64_t out = gl64_t(local_wires[i * num_wires + wire_out]);
-    gl64_t k0 = gl64_t(local_constants[i * num_constants + const_c0]);
-    gl64_t k1 = gl64_t(local_constants[i * num_constants + const_c1]);
+    gl64_t a = gl64_t(wires[i * num_wires + wire_a]);
+    gl64_t b = gl64_t(wires[i * num_wires + wire_b]);
+    gl64_t c = gl64_t(wires[i * num_wires + wire_c]);
+    gl64_t out = gl64_t(wires[i * num_wires + wire_out]);
+    gl64_t k0 = gl64_t(constants[i * num_constants + const_c0]);
+    gl64_t k1 = gl64_t(constants[i * num_constants + const_c1]);
 
     gl64_t v = a * b * k0 + c * k1 - out;
     constraint_accumulator[constraint_row * num_points + i] = (uint64_t)v;
 }
 
 __global__ void eval_constant_gate_constraints(
-    const uint64_t *local_constants,
-    const uint64_t *local_wires,
+    const uint64_t *constants,
+    const uint64_t *wires,
     size_t num_points,
     size_t num_constants,
     size_t num_wires,
@@ -61,8 +61,8 @@ __global__ void eval_constant_gate_constraints(
         return;
     }
 
-    gl64_t w = gl64_t(local_wires[i * num_wires + wire_idx]);
-    gl64_t k = gl64_t(local_constants[i * num_constants + const_idx]);
+    gl64_t w = gl64_t(wires[i * num_wires + wire_idx]);
+    gl64_t k = gl64_t(constants[i * num_constants + const_idx]);
     gl64_t v = w - k;
     constraint_accumulator[constraint_row * num_points + i] = (uint64_t)v;
 }
