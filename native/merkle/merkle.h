@@ -27,6 +27,7 @@ enum HashType
     HashMonolith = 4
 };
 
+/* digests_buf_gpu_ptr may be nullptr when digests_buf_size is 0 (each leaf is a cap leaf). */
 EXTERNC void fill_digests_buf_linear_gpu_with_gpu_ptr(
     void *digests_buf_gpu_ptr,
     void *cap_buf_gpu_ptr,
@@ -39,6 +40,7 @@ EXTERNC void fill_digests_buf_linear_gpu_with_gpu_ptr(
     u64 hash_type,
     u64 gpu_id);
 
+/* digests_buf_gpu_ptr may be nullptr when digests_buf_size is 0. */
 EXTERNC void fill_digests_buf_linear_multigpu_with_gpu_ptr(
     void *digests_buf_gpu_ptr,
     void *cap_buf_gpu_ptr,
