@@ -34,7 +34,6 @@ __device__ static gl64_t gl64_pow_u64(gl64_t base, uint64_t exp)
 __global__ void precompute_z_h_inverse_kernel(
     uint64_t coset_shift_u64,
     uint64_t omega_lde_u64,
-    uint32_t lde_log,
     uint32_t degree_bits,
     uint64_t *z_h_inv_out,
     size_t lde_size)
@@ -62,13 +61,11 @@ __global__ void precompute_z_h_inverse_kernel(
 void launch_precompute_z_h_inverse(
     uint64_t coset_shift_u64,
     uint64_t omega_lde_u64,
-    uint32_t lde_log,
     uint32_t degree_bits,
     uint64_t *d_z_h_inv,
     size_t lde_size,
     cudaStream_t stream)
 {
-    (void)lde_log;
     if (lde_size == 0) {
         return;
     }
@@ -76,7 +73,6 @@ void launch_precompute_z_h_inverse(
     precompute_z_h_inverse_kernel<<<blocks, QUOTIENT_KERNEL_BLOCK, 0, stream>>>(
         coset_shift_u64,
         omega_lde_u64,
-        lde_log,
         degree_bits,
         d_z_h_inv,
         lde_size);

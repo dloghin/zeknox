@@ -934,7 +934,6 @@ TEST(Gl64Ext2, scalar_mul)
 #include <prover/partial_products.cuh>
 #include <prover/gate_constraints.cuh>
 #include <prover/quotient_poly.cuh>
-#include <ff/gl64_params.hpp>
 #include <ntt/ntt.cuh>
 #include <utils/all_gpus.hpp>
 #include <vector>
@@ -1592,7 +1591,7 @@ TEST(QuotientPoly, precompute_z_h_inverse_matches_cpu)
     u64 *d_z;
     CHECKCUDAERR(cudaMalloc(&d_z, lde_size * sizeof(u64)));
     launch_precompute_z_h_inverse(
-        coset_shift, omega_lde, lde_log, degree_bits, d_z, (size_t)lde_size, 0);
+        coset_shift, omega_lde, degree_bits, d_z, (size_t)lde_size, 0);
 
     std::vector<u64> gpu_z(lde_size);
     CHECKCUDAERR(cudaMemcpy(gpu_z.data(), d_z, lde_size * sizeof(u64), cudaMemcpyDeviceToHost));

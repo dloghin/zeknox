@@ -51,8 +51,8 @@ __global__ void eval_arithmetic_gate_constraints(
     size_t num_gate_constraint_rows);
 
 /**
- * ConstantGate: first wire must equal first constant (per point).
- * constraint = wire[0] - const[0] when wire_idx=0, const_idx=0.
+ * ConstantGate: a wire must equal a constant (per point).
+ * Constraint: `wire[wire_idx] - const[const_idx]`.
  */
 __global__ void eval_constant_gate_constraints(
     const uint64_t *local_constants,
