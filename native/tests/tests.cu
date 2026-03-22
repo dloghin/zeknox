@@ -936,6 +936,7 @@ TEST(Gl64Ext2, scalar_mul)
 #include <prover/gate_constraints.cuh>
 #include <prover/quotient_poly.cuh>
 #include <prover/fri_fold.cuh>
+#include <prover/opening_set.cuh>
 #include <ntt/ntt.cuh>
 #include <utils/all_gpus.hpp>
 #include <vector>
@@ -2086,6 +2087,151 @@ TEST(FriFold, fri_commit_phase_rejects_null_output)
                          std::vector<size_t>{3}, 1, 1, ch,
                          fr_t(GROUP_GENERATOR), 0, nullptr),
         cuda_error);
+}
+
+static gl64_ext2_t opening_set_horner_cpu(const u64 *coeff_row, size_t degree, gl64_ext2_t z)
+{
+    gl64_ext2_t acc = gl64_ext2_t(gl64_t(coeff_row[degree - 1]), gl64_t::zero());
+    for (size_t idx = degree - 1; idx > 0; idx--) {
+        acc = acc * z + gl64_ext2_t(gl64_t(coeff_row[idx - 1]), gl64_t::zero());
+    }
+    return acc;
+}
+
+TEST(OpeningSet, construct_matches_cpu_horner)
+{
+    const u32 LOG_DEGREE = 5;
+    const u32 DEGREE = 1u << LOG_DEGREE;
+    const u32 RATE_BITS = 2;
+    const u32 CAP_HEIGHT = 1;
+
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    const u32 N_CS = 4;
+    const u32 N_W = 2;
+    const u32 N_ZP = 3;
+    const u32 N_Q = 1;
+
+    u64 h_cs[N_CS * DEGREE];
+    u64 h_w[N_W * DEGREE];
+    u64 h_zp[N_ZP * DEGREE];
+    u64 h_q[N_Q * DEGREE];
+
+    for (u32 p = 0; p < N_CS; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            h_cs[p * DEGREE + i] = ((u64)(p * 10007 + i * 13 + 3)) % cpp_gl64_t::MOD;
+        }
+    }
+    for (u32 p = 0; p < N_W; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            h_w[p * DEGREE + i] = ((u64)(p * 9001 + i * 17 + 5)) % cpp_gl64_t::MOD;
+        }
+    }
+    for (u32 p = 0; p < N_ZP; p++) {
+        for (u32 i = 0; i < DEGREE; i++) {
+            h_zp[p * DEGREE + i] = ((u64)(p * 8009 + i * 19 + 7)) % cpp_gl64_t::MOD;
+        }
+    }
+    for (u32 i = 0; i < DEGREE; i++) {
+        h_q[i] = ((u64)(i * 23 + 11)) % cpp_gl64_t::MOD;
+    }
+
+    fr_t *d_cs, *d_w, *d_zp, *d_q;
+    CHECKCUDAERR(cudaMalloc(&d_cs, sizeof(h_cs)));
+    CHECKCUDAERR(cudaMalloc(&d_w, sizeof(h_w)));
+    CHECKCUDAERR(cudaMalloc(&d_zp, sizeof(h_zp)));
+    CHECKCUDAERR(cudaMalloc(&d_q, sizeof(h_q)));
+    CHECKCUDAERR(cudaMemcpy(d_cs, h_cs, sizeof(h_cs), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_w, h_w, sizeof(h_w), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_zp, h_zp, sizeof(h_zp), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_q, h_q, sizeof(h_q), cudaMemcpyHostToDevice));
+
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(
+        d_cs, N_CS, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(
+        d_w, N_W, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(
+        d_zp, N_ZP, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(
+        d_q, N_Q, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+
+    gl64_ext2_t zeta(gl64_t(111111111ULL), gl64_t(222222222ULL));
+    gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE + RATE_BITS);
+    gl64_ext2_t gz = g * zeta;
+
+    OpeningSet os = construct_opening_set(
+        zeta, g, batch_cs, batch_w, batch_zp, batch_q,
+        0, 2, 2, 4, 0, 1, 1, 3, 0);
+
+    ASSERT_EQ(os.constants.size(), 2u);
+    ASSERT_EQ(os.plonk_sigmas.size(), 2u);
+    ASSERT_EQ(os.wires.size(), 2u);
+    ASSERT_EQ(os.plonk_zs.size(), 1u);
+    ASSERT_EQ(os.partial_products.size(), 2u);
+    ASSERT_EQ(os.plonk_zs_next.size(), 1u);
+    ASSERT_EQ(os.quotient_polys.size(), 1u);
+
+    for (u32 k = 0; k < 2; k++) {
+        EXPECT_TRUE(os.constants[k] == opening_set_horner_cpu(&h_cs[k * DEGREE], DEGREE, zeta));
+    }
+    for (u32 k = 0; k < 2; k++) {
+        EXPECT_TRUE(os.plonk_sigmas[k] ==
+                    opening_set_horner_cpu(&h_cs[(2 + k) * DEGREE], DEGREE, zeta));
+    }
+    for (u32 k = 0; k < N_W; k++) {
+        EXPECT_TRUE(os.wires[k] == opening_set_horner_cpu(&h_w[k * DEGREE], DEGREE, zeta));
+    }
+    EXPECT_TRUE(os.plonk_zs[0] == opening_set_horner_cpu(&h_zp[0 * DEGREE], DEGREE, zeta));
+    EXPECT_TRUE(os.partial_products[0] == opening_set_horner_cpu(&h_zp[1 * DEGREE], DEGREE, zeta));
+    EXPECT_TRUE(os.partial_products[1] == opening_set_horner_cpu(&h_zp[2 * DEGREE], DEGREE, zeta));
+    EXPECT_TRUE(os.plonk_zs_next[0] == opening_set_horner_cpu(&h_zp[0 * DEGREE], DEGREE, gz));
+    EXPECT_TRUE(os.quotient_polys[0] == opening_set_horner_cpu(&h_q[0], DEGREE, zeta));
+
+    cudaFree(d_cs);
+    cudaFree(d_w);
+    cudaFree(d_zp);
+    cudaFree(d_q);
+}
+
+TEST(OpeningSet, construct_rejects_bad_range)
+{
+    const u32 LOG_DEGREE = 4;
+    const u32 DEGREE = 1u << LOG_DEGREE;
+    const u32 RATE_BITS = 2;
+    const u32 CAP_HEIGHT = 1;
+    init_gpu_for_poly_batch(LOG_DEGREE + RATE_BITS);
+
+    u64 h[DEGREE];
+    for (u32 i = 0; i < DEGREE; i++) {
+        h[i] = (u64)(i + 1);
+    }
+    fr_t *d0, *d1, *d2, *d3;
+    CHECKCUDAERR(cudaMalloc(&d0, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&d1, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&d2, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&d3, sizeof(h)));
+    CHECKCUDAERR(cudaMemcpy(d0, h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d1, h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d2, h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d3, h, sizeof(h), cudaMemcpyHostToDevice));
+
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(d0, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(d1, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(d2, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(d3, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+
+    gl64_ext2_t zeta = gl64_ext2_t::one();
+    gl64_ext2_t g = gl64_ext2_t::one();
+
+    ASSERT_THROW(
+        construct_opening_set(zeta, g, batch_cs, batch_w, batch_zp, batch_q,
+                              0, 2, 0, 1, 0, 1, 0, 1, 0),
+        cuda_error);
+
+    cudaFree(d0);
+    cudaFree(d1);
+    cudaFree(d2);
+    cudaFree(d3);
 }
 
 #endif // USE_CUDA
