@@ -10,6 +10,7 @@
 
 #ifdef USE_CUDA
 
+#include "utils/cuda_grid_limits.cuh"
 #include "types/int_types.h"
 #include "ff/goldilocks.hpp"
 #include "prover/gl64_ext2.cuh"
@@ -71,7 +72,7 @@ void launch_precompute_z_h_inverse(
     if (lde_size == 0) {
         return;
     }
-    int blocks = (int)((lde_size + (size_t)QUOTIENT_KERNEL_BLOCK - 1) / (size_t)QUOTIENT_KERNEL_BLOCK);
+    int blocks = zeknox_cuda_grid_blocks_int(lde_size, (unsigned)QUOTIENT_KERNEL_BLOCK, "launch_precompute_z_h_inverse");
     precompute_z_h_inverse_kernel<<<blocks, QUOTIENT_KERNEL_BLOCK, 0, stream>>>(
         coset_shift_u64,
         omega_lde_u64,
@@ -139,7 +140,7 @@ void launch_eval_vanishing_poly(
     if (lde_size == 0 || num_challenges == 0) {
         return;
     }
-    int blocks = (int)((lde_size + (size_t)QUOTIENT_KERNEL_BLOCK - 1) / (size_t)QUOTIENT_KERNEL_BLOCK);
+    int blocks = zeknox_cuda_grid_blocks_int(lde_size, (unsigned)QUOTIENT_KERNEL_BLOCK, "launch_eval_vanishing_poly");
     eval_vanishing_poly_kernel<<<blocks, QUOTIENT_KERNEL_BLOCK, 0, stream>>>(
         d_gate_constraint_values,
         num_gate_constraints,

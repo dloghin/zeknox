@@ -8,6 +8,7 @@
 
 #ifdef USE_CUDA
 
+#include "utils/cuda_grid_limits.cuh"
 #include "types/int_types.h"
 #include "ff/goldilocks.hpp"
 
@@ -88,7 +89,7 @@ void launch_eval_arithmetic_gate_constraints(
     if (num_points == 0) {
         return;
     }
-    int blocks = (int)((num_points + (size_t)GATE_KERNEL_BLOCK - 1) / (size_t)GATE_KERNEL_BLOCK);
+    int blocks = zeknox_cuda_grid_blocks_int(num_points, (unsigned)GATE_KERNEL_BLOCK, "launch_eval_arithmetic_gate_constraints");
     eval_arithmetic_gate_constraints<<<blocks, GATE_KERNEL_BLOCK, 0, stream>>>(
         d_constants,
         d_wires,
@@ -122,7 +123,7 @@ void launch_eval_constant_gate_constraints(
     if (num_points == 0) {
         return;
     }
-    int blocks = (int)((num_points + (size_t)GATE_KERNEL_BLOCK - 1) / (size_t)GATE_KERNEL_BLOCK);
+    int blocks = zeknox_cuda_grid_blocks_int(num_points, (unsigned)GATE_KERNEL_BLOCK, "launch_eval_constant_gate_constraints");
     eval_constant_gate_constraints<<<blocks, GATE_KERNEL_BLOCK, 0, stream>>>(
         d_constants,
         d_wires,

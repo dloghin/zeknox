@@ -7,6 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "partial_products.cuh"
+#include "utils/cuda_grid_limits.cuh"
 #include "types/int_types.h"
 #include "ff/goldilocks.hpp"
 #include "prover/gl64_ext2.cuh"
@@ -130,7 +131,7 @@ void launch_compute_quotient_chunk_products(
     }
 
     int threads = QUOTIENT_KERNEL_BLOCK;
-    int blocks = (int)((degree + (size_t)threads - 1) / (size_t)threads);
+    int blocks = zeknox_cuda_grid_blocks_int(degree, (unsigned)threads, "launch_compute_quotient_chunk_products");
     compute_quotient_chunk_products_kernel<<<blocks, threads, 0, stream>>>(
         d_wire_values,
         d_sigmas,
