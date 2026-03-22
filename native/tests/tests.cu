@@ -1865,7 +1865,7 @@ TEST(FriFold, fri_commit_phase_smoke)
     const size_t cap_height = 1;
     const size_t rate_bits = 3;
 
-    init_gpu_for_poly_batch(8);
+    init_gpu_for_poly_batch(host_lg2(n));
 
     std::vector<fr_t> hc(n * 2);
     std::vector<fr_t> hv(n * 2);
@@ -1927,7 +1927,7 @@ TEST(FriFold, fri_commit_phase_multi_round)
     const size_t cap_height = 1;
     const size_t rate_bits = 1;
 
-    init_gpu_for_poly_batch(16);
+    init_gpu_for_poly_batch(host_lg2(n));
 
     std::vector<fr_t> hc(n * 2);
     std::vector<fr_t> hv(n * 2);
@@ -1966,6 +1966,68 @@ TEST(FriFold, fri_commit_phase_multi_round)
     ASSERT_EQ(res.trees[1].num_leaves, (size_t)4);
 
     // Final coefficients: 4 >> rate_bits(1) = 2
+    ASSERT_EQ(res.final_num_ext_coeffs, (size_t)2);
+    ASSERT_NE(res.final_coeffs_gpu, nullptr);
+
+    std::vector<fr_t> final_host(res.final_num_ext_coeffs * 2);
+    CHECKCUDAERR(cudaMemcpy(final_host.data(), res.final_coeffs_gpu,
+                            final_host.size() * sizeof(fr_t), cudaMemcpyDeviceToHost));
+    for (size_t i = 0; i < final_host.size(); i++) {
+        ASSERT_LT(final_host[i].get_val(), GL_MOD)
+            << "final coeff out of field range at " << i;
+    }
+
+    cudaFree(d_c);
+    cudaFree(d_v);
+}
+
+TEST(FriFold, fri_commit_phase_small_arity)
+{
+    // arity_bits=1 (arity=2) with ext_degree=2 gives leaf_size = 2*2 = 4 = NUM_HASH_OUT_ELTS.
+    // This exercises the Merkle tree leaf_size == NUM_HASH_OUT_ELTS edge case.
+    const size_t n = 32;
+    const size_t cap_height = 1;
+    const size_t rate_bits = 1;
+
+    init_gpu_for_poly_batch(host_lg2(n));
+
+    std::vector<fr_t> hc(n * 2);
+    std::vector<fr_t> hv(n * 2);
+    for (size_t i = 0; i < n; i++) {
+        hc[i * 2] = fr_t((uint64_t)(i * 11 + 3));
+        hc[i * 2 + 1] = fr_t((uint64_t)(i * 13 + 5));
+        hv[i * 2] = fr_t((uint64_t)(i + 10));
+        hv[i * 2 + 1] = fr_t((uint64_t)(i + 20));
+    }
+
+    fr_t *d_c = nullptr;
+    fr_t *d_v = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_c, hc.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMalloc(&d_v, hv.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(d_c, hc.data(), hc.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_v, hv.data(), hv.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+
+    Challenger ch;
+    FriCommitPhaseResult res;
+    // Three rounds of arity-2 folding: 32 -> 16 -> 8 -> 4
+    std::vector<size_t> arities = {1, 1, 1};
+    fri_commit_phase(
+        d_c, d_v, n, arities,
+        rate_bits, cap_height, ch,
+        fr_t(GROUP_GENERATOR), 0, &res);
+
+    ASSERT_EQ(res.trees.size(), (size_t)3);
+    // Each round halves the domain: leaf_size = arity * ext_degree = 2 * 2 = 4
+    for (size_t i = 0; i < res.trees.size(); i++) {
+        ASSERT_EQ(res.trees[i].leaf_size, (size_t)4) << "tree " << i;
+        ASSERT_NE(res.trees[i].leaves_gpu, nullptr) << "tree " << i << " leaves null";
+        ASSERT_NE(res.trees[i].cap_gpu, nullptr) << "tree " << i << " cap null";
+    }
+    ASSERT_EQ(res.trees[0].num_leaves, (size_t)16);
+    ASSERT_EQ(res.trees[1].num_leaves, (size_t)8);
+    ASSERT_EQ(res.trees[2].num_leaves, (size_t)4);
+
+    // Final: 4 >> rate_bits(1) = 2
     ASSERT_EQ(res.final_num_ext_coeffs, (size_t)2);
     ASSERT_NE(res.final_coeffs_gpu, nullptr);
 
