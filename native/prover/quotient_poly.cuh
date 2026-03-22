@@ -46,8 +46,7 @@ __global__ void eval_vanishing_poly_kernel(
     const uint64_t *extra_vanishing_terms,
     int extra_present,
     const uint64_t *z_h_inv,
-    uint64_t *quotient_values_out,
-    size_t num_challenges);
+    uint64_t *quotient_values_out);
 
 void launch_eval_vanishing_poly(
     const uint64_t *d_gate_constraint_values,

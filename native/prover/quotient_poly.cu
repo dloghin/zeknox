@@ -88,14 +88,10 @@ __global__ void eval_vanishing_poly_kernel(
     const uint64_t *extra_vanishing_terms,
     int extra_present,
     const uint64_t *z_h_inv,
-    uint64_t *quotient_values_out,
-    size_t num_challenges)
+    uint64_t *quotient_values_out)
 {
     size_t i = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
     if (i >= lde_size) {
-        return;
-    }
-    if (num_challenges < 1) {
         return;
     }
 
@@ -146,8 +142,7 @@ void launch_eval_vanishing_poly(
         d_extra_vanishing_terms,
         extra_present,
         d_z_h_inv,
-        d_quotient_values_out,
-        num_challenges);
+        d_quotient_values_out);
 }
 
 #ifndef __CUDA_ARCH__
