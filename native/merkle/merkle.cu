@@ -14,6 +14,8 @@
 #include "keccak/keccak.hpp"
 #include "monolith/monolith.hpp"
 
+#include <cassert>
+
 // 64 threads per block achives the best performance
 #define TPB 64
 
@@ -174,13 +176,15 @@ void fill_digests_buf_linear_gpu_with_gpu_ptr_template(
     u64 cap_height,
     u64 gpu_id)
 {
-    // (special case) compute leaf hashes on GPU
-    if (cap_buf_size == leaves_buf_size)
+    // No internal digest nodes: hash each leaf into cap. digests_buf_gpu_ptr may be nullptr.
+    if (digests_buf_size == 0)
     {
+        assert(cap_buf_size == leaves_buf_size);
         compute_leaves_hashes_direct<H><<<leaves_buf_size / TPB + 1, TPB>>>((u64 *)leaves_buf_gpu_ptr, leaves_buf_size, leaf_size, (u64 *)cap_buf_gpu_ptr);
         CHECKCUDAERR(cudaGetLastError());
         return;
     }
+    assert(digests_buf_gpu_ptr != nullptr);
 
     // 2. compute leaf hashes on GPU
     u64 subtree_digests_len = digests_buf_size >> cap_height;
@@ -320,9 +324,10 @@ void fill_digests_buf_linear_multigpu_with_gpu_ptr_template(
     u64 *gpu_caps_ptrs[16] = {};
     gpu_leaves_ptrs[gpu_id] = (u64 *)leaves_buf_gpu_ptr;
 
-    // (special case) compute leaf hashes on GPU
-    if (cap_buf_size == leaves_buf_size)
+    // (special case) compute leaf hashes on GPU — digests_buf_gpu_ptr may be nullptr
+    if (digests_buf_size == 0)
     {
+        assert(cap_buf_size == leaves_buf_size);
         CHECKCUDAERR(cudaSetDevice(gpu_id));
         CHECKCUDAERR(cudaStreamCreate(&gpu_stream[gpu_id]));
         gpu_leaves_ptrs[gpu_id] = (u64 *)leaves_buf_gpu_ptr;
@@ -373,6 +378,7 @@ void fill_digests_buf_linear_multigpu_with_gpu_ptr_template(
         }
         return;
     }
+    assert(digests_buf_gpu_ptr != nullptr);
 
     // 2. compute leaf hashes on GPU
     u64 subtree_digests_len = digests_buf_size >> cap_height;

@@ -155,11 +155,13 @@ void PolynomialBatchGPU::build_lde_and_merkle(
     this->cap_len = (size_t)1 << c_height;
     this->num_digests = 2 * (output_domain_size - this->cap_len);
 
-    size_t digests_alloc = (this->num_digests == 0 ? NUM_HASH_OUT_ELTS
-                                                   : this->num_digests * NUM_HASH_OUT_ELTS);
     size_t cap_alloc = this->cap_len * NUM_HASH_OUT_ELTS;
 
-    CUDA_OK(cudaMalloc(&this->digests_gpu, digests_alloc * sizeof(fr_t)));
+    if (this->num_digests == 0) {
+        this->digests_gpu = nullptr;
+    } else {
+        CUDA_OK(cudaMalloc(&this->digests_gpu, this->num_digests * NUM_HASH_OUT_ELTS * sizeof(fr_t)));
+    }
     CUDA_OK(cudaMalloc(&this->cap_gpu, cap_alloc * sizeof(fr_t)));
 
     fill_digests_buf_linear_gpu_with_gpu_ptr(

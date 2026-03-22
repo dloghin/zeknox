@@ -18,6 +18,7 @@
 #include <utils/cuda_utils.cuh>
 #include <utils/gpu_t.cuh>
 #include <utils/all_gpus.hpp>
+#include <utils/host_bit.hpp>
 
 #include "fri_fold.cuh"
 
@@ -72,15 +73,6 @@ static void clear_merkle_trees(std::vector<MerkleTreeGPU> &trees)
         free_merkle_tree(t);
     }
     trees.clear();
-}
-
-static inline size_t host_lg2(size_t n)
-{
-    size_t l = 0;
-    while (((size_t)1 << l) < n) {
-        ++l;
-    }
-    return l;
 }
 
 static cpp_gl64_t gl64_pow_u64(cpp_gl64_t base, uint64_t exp)
@@ -410,10 +402,12 @@ void fri_commit_phase(
                     d_values, tree.leaves_gpu, n_work, lg_n, arity_bits, ext_degree, gpu);
                 CUDA_OK(cudaGetLastError());
 
-                size_t digests_alloc = (tree.num_digests == 0 ? NUM_HASH_OUT_ELTS
-                                                              : tree.num_digests * NUM_HASH_OUT_ELTS);
                 size_t cap_alloc = tree.cap_len * NUM_HASH_OUT_ELTS;
-                tree.digests_gpu = cuda_malloc_fr_count(digests_alloc);
+                if (tree.num_digests == 0) {
+                    tree.digests_gpu = nullptr;
+                } else {
+                    tree.digests_gpu = cuda_malloc_fr_count(tree.num_digests * NUM_HASH_OUT_ELTS);
+                }
                 tree.cap_gpu = cuda_malloc_fr_count(cap_alloc);
 
                 fill_digests_buf_linear_gpu_with_gpu_ptr(

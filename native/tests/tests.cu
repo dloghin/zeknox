@@ -48,6 +48,7 @@ void printhash(u64 *h)
 #ifdef USE_CUDA
 
 #include <utils/cuda_utils.cuh>
+#include <utils/host_bit.hpp>
 
 __global__ void keccak_gpu_driver(u64 *input, u32 size, u64 *hash)
 {
@@ -1753,15 +1754,6 @@ TEST(QuotientPoly, eval_vanishing_poly_matches_cpu)
     cudaFree(d_out);
 }
 
-static size_t fri_cpu_lg2(size_t n)
-{
-    size_t l = 0;
-    while (((size_t)1 << l) < n) {
-        ++l;
-    }
-    return l;
-}
-
 static size_t fri_cpu_rev_bits(size_t val, size_t bit_count)
 {
     size_t result = 0;
@@ -1777,7 +1769,7 @@ TEST(FriFold, prepare_merkle_leaves_matches_cpu)
     const size_t n = 16;
     const size_t arity_bits = 2;
     const size_t arity = (size_t)1 << arity_bits;
-    const size_t lg_n = fri_cpu_lg2(n);
+    const size_t lg_n = host_lg2(n);
     const size_t ext_degree = 2;
 
     std::vector<fr_t> host_vals(n * ext_degree);
