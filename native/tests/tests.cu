@@ -934,6 +934,7 @@ TEST(Gl64Ext2, scalar_mul)
 #include <prover/partial_products.cuh>
 #include <prover/gate_constraints.cuh>
 #include <prover/quotient_poly.cuh>
+#include <prover/fri_fold.cuh>
 #include <ntt/ntt.cuh>
 #include <utils/all_gpus.hpp>
 #include <vector>
@@ -1750,6 +1751,167 @@ TEST(QuotientPoly, eval_vanishing_poly_matches_cpu)
     cudaFree(d_extra);
     cudaFree(d_zh);
     cudaFree(d_out);
+}
+
+static size_t fri_cpu_lg2(size_t n)
+{
+    size_t l = 0;
+    while (((size_t)1 << l) < n) {
+        ++l;
+    }
+    return l;
+}
+
+static size_t fri_cpu_rev_bits(size_t val, size_t bit_count)
+{
+    size_t result = 0;
+    for (size_t i = 0; i < bit_count; i++) {
+        result = (result << 1) | (val & 1);
+        val >>= 1;
+    }
+    return result;
+}
+
+TEST(FriFold, prepare_merkle_leaves_matches_cpu)
+{
+    const size_t n = 16;
+    const size_t arity_bits = 2;
+    const size_t arity = (size_t)1 << arity_bits;
+    const size_t lg_n = fri_cpu_lg2(n);
+    const size_t ext_degree = 2;
+
+    std::vector<fr_t> host_vals(n * ext_degree);
+    for (size_t i = 0; i < n; i++) {
+        host_vals[i * 2] = fr_t((uint64_t)(i + 1));
+        host_vals[i * 2 + 1] = fr_t((uint64_t)(i * 3 + 11));
+    }
+    std::vector<fr_t> cpu_leaves(n * ext_degree);
+    for (size_t tid = 0; tid < n / arity; tid++) {
+        for (size_t j = 0; j < arity; j++) {
+            size_t src = fri_cpu_rev_bits(tid * arity + j, lg_n);
+            for (size_t k = 0; k < ext_degree; k++) {
+                cpu_leaves[tid * arity * ext_degree + j * ext_degree + k] =
+                    host_vals[src * ext_degree + k];
+            }
+        }
+    }
+
+    fr_t *d_v = nullptr;
+    fr_t *d_l = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_v, host_vals.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMalloc(&d_l, cpu_leaves.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(d_v, host_vals.data(), host_vals.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+
+    fri_prepare_merkle_leaves_host_launch(d_v, d_l, n, lg_n, arity_bits, ext_degree, 0);
+
+    std::vector<fr_t> gpu_leaves(cpu_leaves.size());
+    CHECKCUDAERR(cudaMemcpy(gpu_leaves.data(), d_l, gpu_leaves.size() * sizeof(fr_t), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < cpu_leaves.size(); i++) {
+        ASSERT_EQ(gpu_leaves[i].get_val(), cpu_leaves[i].get_val()) << "leaf mismatch at " << i;
+    }
+    cudaFree(d_v);
+    cudaFree(d_l);
+}
+
+TEST(FriFold, fold_coefficients_matches_cpu)
+{
+    const size_t n = 16;
+    const size_t arity_bits = 2;
+    const size_t arity = (size_t)1 << arity_bits;
+    const size_t ext_degree = 2;
+
+    std::vector<gl64_ext2_t> coeffs_ext(n);
+    for (size_t i = 0; i < n; i++) {
+        coeffs_ext[i] = gl64_ext2_t(gl64_t((uint64_t)(i + 5)), gl64_t((uint64_t)(i * 7 + 3)));
+    }
+    gl64_ext2_t beta(gl64_t(123456789ULL), gl64_t(987654321ULL));
+
+    std::vector<gl64_ext2_t> cpu_out(n / arity);
+    for (size_t tid = 0; tid < n / arity; tid++) {
+        gl64_ext2_t acc = coeffs_ext[tid * arity + arity - 1];
+        for (int r = (int)arity - 2; r >= 0; r--) {
+            acc = acc * beta + coeffs_ext[tid * arity + (size_t)r];
+        }
+        cpu_out[tid] = acc;
+    }
+
+    std::vector<fr_t> host_in(n * ext_degree);
+    for (size_t i = 0; i < n; i++) {
+        host_in[i * 2] = coeffs_ext[i].real;
+        host_in[i * 2 + 1] = coeffs_ext[i].imag;
+    }
+    fr_t beta_host[2] = {beta.real, beta.imag};
+
+    fr_t *d_in = nullptr;
+    fr_t *d_out = nullptr;
+    fr_t *d_beta = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_in, host_in.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMalloc(&d_out, cpu_out.size() * 2 * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMalloc(&d_beta, 2 * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(d_in, host_in.data(), host_in.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_beta, beta_host, 2 * sizeof(fr_t), cudaMemcpyHostToDevice));
+
+    fri_fold_coefficients_host_launch(d_in, d_out, d_beta, n, arity_bits, ext_degree, 0);
+
+    std::vector<fr_t> gpu_flat(cpu_out.size() * 2);
+    CHECKCUDAERR(cudaMemcpy(gpu_flat.data(), d_out, gpu_flat.size() * sizeof(fr_t), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < cpu_out.size(); i++) {
+        ASSERT_EQ(gpu_flat[i * 2].get_val(), cpu_out[i].real.get_val());
+        ASSERT_EQ(gpu_flat[i * 2 + 1].get_val(), cpu_out[i].imag.get_val());
+    }
+    cudaFree(d_in);
+    cudaFree(d_out);
+    cudaFree(d_beta);
+}
+
+TEST(FriFold, fri_commit_phase_smoke)
+{
+    const size_t n = 8;
+    const size_t arity_bits = 3;
+    const size_t cap_height = 1;
+    const size_t rate_bits = 3;
+
+    init_gpu_for_poly_batch(8);
+
+    std::vector<fr_t> hc(n * 2);
+    std::vector<fr_t> hv(n * 2);
+    for (size_t i = 0; i < n; i++) {
+        hc[i * 2] = fr_t((uint64_t)(i + 1));
+        hc[i * 2 + 1] = fr_t((uint64_t)(i + 2));
+        hv[i * 2] = fr_t((uint64_t)(100 + i));
+        hv[i * 2 + 1] = fr_t((uint64_t)(200 + i));
+    }
+
+    fr_t *d_c = nullptr;
+    fr_t *d_v = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_c, hc.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMalloc(&d_v, hv.size() * sizeof(fr_t)));
+    CHECKCUDAERR(cudaMemcpy(d_c, hc.data(), hc.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_v, hv.data(), hv.size() * sizeof(fr_t), cudaMemcpyHostToDevice));
+
+    Challenger ch;
+    FriCommitPhaseResult res;
+    fri_commit_phase(
+        d_c,
+        d_v,
+        n,
+        std::vector<size_t>{arity_bits},
+        rate_bits,
+        cap_height,
+        ch,
+        fr_t(GROUP_GENERATOR),
+        0,
+        &res);
+
+    ASSERT_EQ(res.trees.size(), (size_t)1);
+    ASSERT_NE(res.trees[0].cap_gpu, nullptr);
+    ASSERT_NE(res.final_coeffs_gpu, nullptr);
+    ASSERT_GE(res.final_num_ext_coeffs, (size_t)1);
+
+    cudaFree(d_c);
+    cudaFree(d_v);
 }
 
 #endif // USE_CUDA
