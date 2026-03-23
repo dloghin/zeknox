@@ -128,7 +128,8 @@ set(LIB_CUDA_SRC
     prover/partial_products.cu
     prover/gate_constraints.cu
     prover/quotient_poly.cu
-    prover/fri_fold.cu)
+    prover/fri_fold.cu
+    prover/opening_set.cu)
 
 if (BUILD_MSM)
     list(APPEND LIB_CUDA_SRC msm/msm.cu)
