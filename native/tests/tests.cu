@@ -939,7 +939,19 @@ TEST(Gl64Ext2, scalar_mul)
 #include <prover/opening_set.cuh>
 #include <ntt/ntt.cuh>
 #include <utils/all_gpus.hpp>
+#include <memory>
 #include <vector>
+
+/// Frees device memory when the test exits, including on assertion failure or exception.
+struct cuda_fr_deleter {
+    void operator()(fr_t *p) const noexcept
+    {
+        if (p) {
+            (void)cudaFree(p);
+        }
+    }
+};
+using device_fr_ptr = std::unique_ptr<fr_t, cuda_fr_deleter>;
 
 static void init_gpu_for_poly_batch(u32 max_log_degree)
 {
@@ -2136,24 +2148,28 @@ TEST(OpeningSet, construct_matches_cpu_horner)
         h_q[i] = ((u64)(i * 23 + 11)) % cpp_gl64_t::MOD;
     }
 
-    fr_t *d_cs, *d_w, *d_zp, *d_q;
-    CHECKCUDAERR(cudaMalloc(&d_cs, sizeof(h_cs)));
-    CHECKCUDAERR(cudaMalloc(&d_w, sizeof(h_w)));
-    CHECKCUDAERR(cudaMalloc(&d_zp, sizeof(h_zp)));
-    CHECKCUDAERR(cudaMalloc(&d_q, sizeof(h_q)));
-    CHECKCUDAERR(cudaMemcpy(d_cs, h_cs, sizeof(h_cs), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_w, h_w, sizeof(h_w), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_zp, h_zp, sizeof(h_zp), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_q, h_q, sizeof(h_q), cudaMemcpyHostToDevice));
+    fr_t *raw_cs = nullptr, *raw_w = nullptr, *raw_zp = nullptr, *raw_q = nullptr;
+    CHECKCUDAERR(cudaMalloc(&raw_cs, sizeof(h_cs)));
+    CHECKCUDAERR(cudaMalloc(&raw_w, sizeof(h_w)));
+    CHECKCUDAERR(cudaMalloc(&raw_zp, sizeof(h_zp)));
+    CHECKCUDAERR(cudaMalloc(&raw_q, sizeof(h_q)));
+    device_fr_ptr d_cs(raw_cs);
+    device_fr_ptr d_w(raw_w);
+    device_fr_ptr d_zp(raw_zp);
+    device_fr_ptr d_q(raw_q);
+    CHECKCUDAERR(cudaMemcpy(d_cs.get(), h_cs, sizeof(h_cs), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_w.get(), h_w, sizeof(h_w), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_zp.get(), h_zp, sizeof(h_zp), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_q.get(), h_q, sizeof(h_q), cudaMemcpyHostToDevice));
 
     auto batch_cs = PolynomialBatchGPU::from_coeffs(
-        d_cs, N_CS, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+        d_cs.get(), N_CS, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
     auto batch_w = PolynomialBatchGPU::from_coeffs(
-        d_w, N_W, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+        d_w.get(), N_W, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
     auto batch_zp = PolynomialBatchGPU::from_coeffs(
-        d_zp, N_ZP, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+        d_zp.get(), N_ZP, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
     auto batch_q = PolynomialBatchGPU::from_coeffs(
-        d_q, N_Q, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+        d_q.get(), N_Q, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta(gl64_t(111111111ULL), gl64_t(222222222ULL));
     gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE);
@@ -2186,11 +2202,6 @@ TEST(OpeningSet, construct_matches_cpu_horner)
     EXPECT_TRUE(os.partial_products[1] == opening_set_horner_cpu(&h_zp[2 * DEGREE], DEGREE, zeta));
     EXPECT_TRUE(os.plonk_zs_next[0] == opening_set_horner_cpu(&h_zp[0 * DEGREE], DEGREE, gz));
     EXPECT_TRUE(os.quotient_polys[0] == opening_set_horner_cpu(&h_q[0], DEGREE, zeta));
-
-    cudaFree(d_cs);
-    cudaFree(d_w);
-    cudaFree(d_zp);
-    cudaFree(d_q);
 }
 
 TEST(OpeningSet, construct_rejects_bad_range)
@@ -2205,20 +2216,24 @@ TEST(OpeningSet, construct_rejects_bad_range)
     for (u32 i = 0; i < DEGREE; i++) {
         h[i] = (u64)(i + 1);
     }
-    fr_t *d0, *d1, *d2, *d3;
-    CHECKCUDAERR(cudaMalloc(&d0, sizeof(h)));
-    CHECKCUDAERR(cudaMalloc(&d1, sizeof(h)));
-    CHECKCUDAERR(cudaMalloc(&d2, sizeof(h)));
-    CHECKCUDAERR(cudaMalloc(&d3, sizeof(h)));
-    CHECKCUDAERR(cudaMemcpy(d0, h, sizeof(h), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d1, h, sizeof(h), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d2, h, sizeof(h), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d3, h, sizeof(h), cudaMemcpyHostToDevice));
+    fr_t *r0 = nullptr, *r1 = nullptr, *r2 = nullptr, *r3 = nullptr;
+    CHECKCUDAERR(cudaMalloc(&r0, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&r1, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&r2, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&r3, sizeof(h)));
+    device_fr_ptr d0(r0);
+    device_fr_ptr d1(r1);
+    device_fr_ptr d2(r2);
+    device_fr_ptr d3(r3);
+    CHECKCUDAERR(cudaMemcpy(d0.get(), h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d1.get(), h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d2.get(), h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d3.get(), h, sizeof(h), cudaMemcpyHostToDevice));
 
-    auto batch_cs = PolynomialBatchGPU::from_coeffs(d0, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_w = PolynomialBatchGPU::from_coeffs(d1, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_zp = PolynomialBatchGPU::from_coeffs(d2, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_q = PolynomialBatchGPU::from_coeffs(d3, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(d0.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(d1.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(d2.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(d3.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta = gl64_ext2_t::one();
     gl64_ext2_t g = gl64_ext2_t::one();
@@ -2234,11 +2249,6 @@ TEST(OpeningSet, construct_rejects_bad_range)
         construct_opening_set(zeta, g, batch_cs, batch_w, batch_zp, batch_q,
                               0, 1, 1, 0, 0, 1, 0, 1, 0),
         cuda_error);
-
-    cudaFree(d0);
-    cudaFree(d1);
-    cudaFree(d2);
-    cudaFree(d3);
 }
 
 TEST(OpeningSet, construct_rejects_degree_log_mismatch)
@@ -2254,20 +2264,24 @@ TEST(OpeningSet, construct_rejects_degree_log_mismatch)
     for (u32 i = 0; i < (1u << LOG_DEGREE_A); i++) ha[i] = (u64)(i + 1);
     for (u32 i = 0; i < (1u << LOG_DEGREE_B); i++) hb[i] = (u64)(i + 1);
 
-    fr_t *da, *db, *dc, *dd;
-    CHECKCUDAERR(cudaMalloc(&da, sizeof(ha)));
-    CHECKCUDAERR(cudaMalloc(&db, sizeof(hb)));
-    CHECKCUDAERR(cudaMalloc(&dc, sizeof(ha)));
-    CHECKCUDAERR(cudaMalloc(&dd, sizeof(ha)));
-    CHECKCUDAERR(cudaMemcpy(da, ha, sizeof(ha), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(db, hb, sizeof(hb), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dc, ha, sizeof(ha), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dd, ha, sizeof(ha), cudaMemcpyHostToDevice));
+    fr_t *ra = nullptr, *rb = nullptr, *rc = nullptr, *rd = nullptr;
+    CHECKCUDAERR(cudaMalloc(&ra, sizeof(ha)));
+    CHECKCUDAERR(cudaMalloc(&rb, sizeof(hb)));
+    CHECKCUDAERR(cudaMalloc(&rc, sizeof(ha)));
+    CHECKCUDAERR(cudaMalloc(&rd, sizeof(ha)));
+    device_fr_ptr da(ra);
+    device_fr_ptr db(rb);
+    device_fr_ptr dc(rc);
+    device_fr_ptr dd(rd);
+    CHECKCUDAERR(cudaMemcpy(da.get(), ha, sizeof(ha), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(db.get(), hb, sizeof(hb), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dc.get(), ha, sizeof(ha), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dd.get(), ha, sizeof(ha), cudaMemcpyHostToDevice));
 
-    auto batch_cs = PolynomialBatchGPU::from_coeffs(da, 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_w = PolynomialBatchGPU::from_coeffs(db, 1, LOG_DEGREE_B, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_zp = PolynomialBatchGPU::from_coeffs(dc, 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_q = PolynomialBatchGPU::from_coeffs(dd, 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(da.get(), 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(db.get(), 1, LOG_DEGREE_B, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(dc.get(), 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(dd.get(), 1, LOG_DEGREE_A, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta = gl64_ext2_t::one();
     gl64_ext2_t g = gl64_ext2_t::one();
@@ -2276,11 +2290,6 @@ TEST(OpeningSet, construct_rejects_degree_log_mismatch)
         construct_opening_set(zeta, g, batch_cs, batch_w, batch_zp, batch_q,
                               0, 1, 0, 0, 0, 1, 0, 0, 0),
         cuda_error);
-
-    cudaFree(da);
-    cudaFree(db);
-    cudaFree(dc);
-    cudaFree(dd);
 }
 
 TEST(OpeningSet, construct_handles_empty_ranges)
@@ -2294,20 +2303,24 @@ TEST(OpeningSet, construct_handles_empty_ranges)
     u64 h[DEGREE];
     for (u32 i = 0; i < DEGREE; i++) h[i] = (u64)(i + 1);
 
-    fr_t *d0, *d1, *d2, *d3;
-    CHECKCUDAERR(cudaMalloc(&d0, sizeof(h)));
-    CHECKCUDAERR(cudaMalloc(&d1, sizeof(h)));
-    CHECKCUDAERR(cudaMalloc(&d2, sizeof(h)));
-    CHECKCUDAERR(cudaMalloc(&d3, sizeof(h)));
-    CHECKCUDAERR(cudaMemcpy(d0, h, sizeof(h), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d1, h, sizeof(h), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d2, h, sizeof(h), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d3, h, sizeof(h), cudaMemcpyHostToDevice));
+    fr_t *r0 = nullptr, *r1 = nullptr, *r2 = nullptr, *r3 = nullptr;
+    CHECKCUDAERR(cudaMalloc(&r0, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&r1, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&r2, sizeof(h)));
+    CHECKCUDAERR(cudaMalloc(&r3, sizeof(h)));
+    device_fr_ptr d0(r0);
+    device_fr_ptr d1(r1);
+    device_fr_ptr d2(r2);
+    device_fr_ptr d3(r3);
+    CHECKCUDAERR(cudaMemcpy(d0.get(), h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d1.get(), h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d2.get(), h, sizeof(h), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d3.get(), h, sizeof(h), cudaMemcpyHostToDevice));
 
-    auto batch_cs = PolynomialBatchGPU::from_coeffs(d0, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_w = PolynomialBatchGPU::from_coeffs(d1, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_zp = PolynomialBatchGPU::from_coeffs(d2, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
-    auto batch_q = PolynomialBatchGPU::from_coeffs(d3, 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_cs = PolynomialBatchGPU::from_coeffs(d0.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_w = PolynomialBatchGPU::from_coeffs(d1.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_zp = PolynomialBatchGPU::from_coeffs(d2.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
+    auto batch_q = PolynomialBatchGPU::from_coeffs(d3.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta(gl64_t(42ULL), gl64_t(7ULL));
     gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE);
@@ -2324,11 +2337,6 @@ TEST(OpeningSet, construct_handles_empty_ranges)
     ASSERT_EQ(os.partial_products.size(), 1u);
     ASSERT_EQ(os.plonk_zs_next.size(), 1u);
     ASSERT_EQ(os.quotient_polys.size(), 1u);
-
-    cudaFree(d0);
-    cudaFree(d1);
-    cudaFree(d2);
-    cudaFree(d3);
 }
 
 #endif // USE_CUDA

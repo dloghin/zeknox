@@ -2,7 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
 #include <string>
 
 #include <utils/all_gpus.hpp>
@@ -144,44 +146,43 @@ OpeningSet construct_opening_set(
                 zs_partial_products.num_polynomials);
 
     // Find the largest poly count across all eval calls to size a single scratch buffer.
-    size_t max_polys = constants_end - constants_start;
-    if (sigmas_end - sigmas_start > max_polys) max_polys = sigmas_end - sigmas_start;
-    if (wires.num_polynomials > max_polys) max_polys = wires.num_polynomials;
-    if (zs_end - zs_start > max_polys) max_polys = zs_end - zs_start;
-    if (partial_products_end - partial_products_start > max_polys)
-        max_polys = partial_products_end - partial_products_start;
-    if (quotient_polys.num_polynomials > max_polys) max_polys = quotient_polys.num_polynomials;
+    size_t max_polys = std::max({
+        constants_end - constants_start,
+        sigmas_end - sigmas_start,
+        wires.num_polynomials,
+        zs_end - zs_start,
+        partial_products_end - partial_products_start,
+        quotient_polys.num_polynomials
+    });
 
     auto &gpu = select_gpu((int)gpu_id);
     gpu.select();
 
-    fr_t *d_scratch = nullptr;
+    auto cuda_deleter = [](fr_t* ptr) { if (ptr) cudaFree(ptr); };
+    std::unique_ptr<fr_t, decltype(cuda_deleter)> d_scratch_ptr(nullptr, cuda_deleter);
     if (max_polys > 0) {
-        CUDA_OK(cudaMalloc(&d_scratch, max_polys * 2 * sizeof(fr_t)));
+        fr_t* raw_ptr;
+        CUDA_OK(cudaMalloc(&raw_ptr, max_polys * 2 * sizeof(fr_t)));
+        d_scratch_ptr.reset(raw_ptr);
     }
+    fr_t *d_scratch = d_scratch_ptr.get();
 
     gl64_ext2_t gz = g * zeta;
 
     OpeningSet out;
-    try {
-        out.constants = eval_contiguous(constants_sigmas, constants_start,
-                                        constants_end - constants_start, zeta, d_scratch, gpu);
-        out.plonk_sigmas = eval_contiguous(constants_sigmas, sigmas_start,
-                                           sigmas_end - sigmas_start, zeta, d_scratch, gpu);
-        out.wires = eval_contiguous(wires, 0, wires.num_polynomials, zeta, d_scratch, gpu);
-        out.plonk_zs = eval_contiguous(zs_partial_products, zs_start,
-                                        zs_end - zs_start, zeta, d_scratch, gpu);
-        out.partial_products =
-            eval_contiguous(zs_partial_products, partial_products_start,
-                            partial_products_end - partial_products_start, zeta, d_scratch, gpu);
-        out.plonk_zs_next = eval_contiguous(zs_partial_products, zs_start,
-                                             zs_end - zs_start, gz, d_scratch, gpu);
-        out.quotient_polys = eval_contiguous(quotient_polys, 0,
-                                              quotient_polys.num_polynomials, zeta, d_scratch, gpu);
-    } catch (...) {
-        if (d_scratch) cudaFree(d_scratch);
-        throw;
-    }
-    if (d_scratch) cudaFree(d_scratch);
+    out.constants = eval_contiguous(constants_sigmas, constants_start,
+                                    constants_end - constants_start, zeta, d_scratch, gpu);
+    out.plonk_sigmas = eval_contiguous(constants_sigmas, sigmas_start,
+                                       sigmas_end - sigmas_start, zeta, d_scratch, gpu);
+    out.wires = eval_contiguous(wires, 0, wires.num_polynomials, zeta, d_scratch, gpu);
+    out.plonk_zs = eval_contiguous(zs_partial_products, zs_start,
+                                    zs_end - zs_start, zeta, d_scratch, gpu);
+    out.partial_products =
+        eval_contiguous(zs_partial_products, partial_products_start,
+                        partial_products_end - partial_products_start, zeta, d_scratch, gpu);
+    out.plonk_zs_next = eval_contiguous(zs_partial_products, zs_start,
+                                         zs_end - zs_start, gz, d_scratch, gpu);
+    out.quotient_polys = eval_contiguous(quotient_polys, 0,
+                                          quotient_polys.num_polynomials, zeta, d_scratch, gpu);
     return out;
 }
