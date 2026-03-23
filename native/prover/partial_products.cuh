@@ -59,6 +59,28 @@ void compute_z_prefix_product_host(
     uint64_t *d_z_poly_out,
     cudaStream_t stream = 0);
 
+/**
+ * Phase B (GPU): single-block kernel; matches `compute_z_prefix_product_host` without device↔host copies.
+ */
+void launch_compute_z_prefix_product_gpu(
+    const uint64_t *d_chunk_products,
+    size_t degree,
+    size_t num_chunks,
+    uint64_t *d_partial_products_out,
+    uint64_t *d_z_poly_out,
+    cudaStream_t stream = 0);
+
+/**
+ * Pack Z + partial columns (row-major partials) into polynomial-major layout for `PolynomialBatchGPU::from_values`.
+ */
+void launch_pack_zs_pp_polynomials(
+    const uint64_t *d_z_start,
+    const uint64_t *d_partial_row_major,
+    uint64_t *d_out_poly_major,
+    size_t degree,
+    size_t num_chunks,
+    cudaStream_t stream = 0);
+
 void launch_compute_quotient_chunk_products(
     const uint64_t *d_wire_values,
     const uint64_t *d_sigmas,

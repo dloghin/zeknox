@@ -2172,7 +2172,7 @@ TEST(OpeningSet, construct_matches_cpu_horner)
         d_q.get(), N_Q, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta(gl64_t(111111111ULL), gl64_t(222222222ULL));
-    gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE);
+    gl64_ext2_t g(gl64_t(OMEGA[LOG_DEGREE]), gl64_t::zero());
     gl64_ext2_t gz = g * zeta;
 
     OpeningSet os = construct_opening_set(
@@ -2323,7 +2323,7 @@ TEST(OpeningSet, construct_handles_empty_ranges)
     auto batch_q = PolynomialBatchGPU::from_coeffs(d3.get(), 1, LOG_DEGREE, RATE_BITS, false, CAP_HEIGHT, 0);
 
     gl64_ext2_t zeta(gl64_t(42ULL), gl64_t(7ULL));
-    gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(LOG_DEGREE);
+    gl64_ext2_t g(gl64_t(OMEGA[LOG_DEGREE]), gl64_t::zero());
 
     // Empty constants and sigmas ranges (start == end), valid zs and partial_products
     OpeningSet os = construct_opening_set(
