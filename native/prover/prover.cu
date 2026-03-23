@@ -32,19 +32,21 @@ constexpr uint32_t kProofMagic = 0x584e4b5a;
 constexpr uint32_t kProofVersion = 1u;
 
 struct cuda_fr_deleter {
+    cudaStream_t stream{};
     void operator()(fr_t *p) const noexcept
     {
         if (p) {
-            (void)cudaFree(p);
+            (void)cudaFreeAsync((void *)p, stream);
         }
     }
 };
 
 struct cuda_u64_deleter {
+    cudaStream_t stream{};
     void operator()(uint64_t *p) const noexcept
     {
         if (p) {
-            (void)cudaFree(p);
+            (void)cudaFreeAsync((void *)p, stream);
         }
     }
 };
@@ -256,7 +258,7 @@ RustError gpu_prove(
 
         fr_t *d_wire_raw = nullptr;
         CUDA_OK(cudaMalloc(&d_wire_raw, degree * config->num_wires * sizeof(fr_t)));
-        unique_fr d_wire_poly(d_wire_raw);
+        unique_fr d_wire_poly(d_wire_raw, cuda_fr_deleter{stream});
         CUDA_OK(cudaMemcpy(
             d_wire_poly.get(),
             wire_values,
@@ -265,9 +267,9 @@ RustError gpu_prove(
 
         uint64_t *d_wr = nullptr;
         CUDA_OK(cudaMalloc(&d_wr, degree * config->num_wires * sizeof(uint64_t)));
-        unique_u64 d_wire_row(d_wr);
+        unique_u64 d_wire_row(d_wr, cuda_u64_deleter{stream});
         launch_transpose_trace(d_wire_poly.get(), d_wire_row.get(), degree, config->num_wires, stream);
-        gpu.sync();
+        CUDA_OK(cudaStreamSynchronize(stream));
 
         PolynomialBatchGPU wires_batch = PolynomialBatchGPU::from_values(
             d_wire_poly.get(),
@@ -292,7 +294,7 @@ RustError gpu_prove(
 
         fr_t *d_sig = nullptr;
         CUDA_OK(cudaMalloc(&d_sig, degree * config->num_routed_wires * sizeof(fr_t)));
-        unique_fr d_sigma_trace(d_sig);
+        unique_fr d_sigma_trace(d_sig, cuda_fr_deleter{stream});
         CUDA_OK(cudaMemcpy(
             d_sigma_trace.get(),
             static_cast<const fr_t *>(constants_sigmas_coeffs_gpu) +
@@ -321,25 +323,25 @@ RustError gpu_prove(
         // Transpose sigma from polynomial-major (after NTT) to row-major for partial products kernel
         uint64_t *d_sr = nullptr;
         CUDA_OK(cudaMalloc(&d_sr, degree * config->num_routed_wires * sizeof(uint64_t)));
-        unique_u64 d_sigma_row(d_sr);
+        unique_u64 d_sigma_row(d_sr, cuda_u64_deleter{stream});
         launch_transpose_trace(
             d_sigma_trace.get(), d_sigma_row.get(), degree, config->num_routed_wires, stream);
-        gpu.sync();
+        CUDA_OK(cudaStreamSynchronize(stream));
         d_sigma_trace.reset();
 
         uint64_t *d_k_raw = nullptr;
         uint64_t *d_su_raw = nullptr;
         CUDA_OK(cudaMalloc(&d_k_raw, config->num_routed_wires * sizeof(uint64_t)));
         CUDA_OK(cudaMalloc(&d_su_raw, degree * sizeof(uint64_t)));
-        unique_u64 d_k(d_k_raw);
-        unique_u64 d_sub(d_su_raw);
+        unique_u64 d_k(d_k_raw, cuda_u64_deleter{stream});
+        unique_u64 d_sub(d_su_raw, cuda_u64_deleter{stream});
         CUDA_OK(cudaMemcpy(
             d_k.get(), k_is, config->num_routed_wires * sizeof(uint64_t), cudaMemcpyHostToDevice));
         CUDA_OK(cudaMemcpy(d_sub.get(), subgroup, degree * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
         uint64_t *d_ch = nullptr;
         CUDA_OK(cudaMalloc(&d_ch, degree * num_chunks * sizeof(uint64_t)));
-        unique_u64 d_chunk(d_ch);
+        unique_u64 d_chunk(d_ch, cuda_u64_deleter{stream});
         launch_compute_quotient_chunk_products(
             d_wire_row.get(),
             d_sigma_row.get(),
@@ -353,7 +355,7 @@ RustError gpu_prove(
             config->quotient_degree_factor,
             d_chunk.get(),
             stream);
-        gpu.sync();
+        CUDA_OK(cudaStreamSynchronize(stream));
 
         d_sigma_row.reset();
         d_k.reset();
@@ -364,35 +366,23 @@ RustError gpu_prove(
         uint64_t *d_zz = nullptr;
         CUDA_OK(cudaMalloc(&d_pa, degree * num_chunks * sizeof(uint64_t)));
         CUDA_OK(cudaMalloc(&d_zz, degree * sizeof(uint64_t)));
-        unique_u64 d_partial(d_pa);
-        unique_u64 d_z(d_zz);
-        compute_z_prefix_product_host(d_chunk.get(), degree, num_chunks, d_partial.get(), d_z.get(), stream);
+        unique_u64 d_partial(d_pa, cuda_u64_deleter{stream});
+        unique_u64 d_z(d_zz, cuda_u64_deleter{stream});
+        launch_compute_z_prefix_product_gpu(
+            d_chunk.get(), degree, num_chunks, d_partial.get(), d_z.get(), stream);
         d_chunk.reset();
 
         fr_t *d_zpr = nullptr;
         CUDA_OK(cudaMalloc(&d_zpr, num_zp_polys * degree * sizeof(fr_t)));
-        unique_fr d_zp_vals(d_zpr);
-        {
-            std::vector<uint64_t> h_z(degree);
-            std::vector<uint64_t> h_part(degree * num_chunks);
-            CUDA_OK(cudaMemcpy(h_z.data(), d_z.get(), degree * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-            CUDA_OK(cudaMemcpy(
-                h_part.data(), d_partial.get(), degree * num_chunks * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-            std::vector<uint64_t> h_pack(num_zp_polys * degree);
-            for (size_t r = 0; r < degree; r++) {
-                h_pack[0 * degree + r] = h_z[r];
-            }
-            for (size_t k = 0; k < num_chunks; k++) {
-                for (size_t r = 0; r < degree; r++) {
-                    h_pack[(1 + k) * degree + r] = h_part[r * num_chunks + k];
-                }
-            }
-            CUDA_OK(cudaMemcpy(
-                d_zp_vals.get(),
-                h_pack.data(),
-                num_zp_polys * degree * sizeof(fr_t),
-                cudaMemcpyHostToDevice));
-        }
+        unique_fr d_zp_vals(d_zpr, cuda_fr_deleter{stream});
+        launch_pack_zs_pp_polynomials(
+            d_z.get(),
+            d_partial.get(),
+            reinterpret_cast<uint64_t *>(d_zp_vals.get()),
+            degree,
+            num_chunks,
+            stream);
+        CUDA_OK(cudaStreamSynchronize(stream));
         d_z.reset();
         d_partial.reset();
 
@@ -425,7 +415,7 @@ RustError gpu_prove(
 
         fr_t *d_qc = nullptr;
         CUDA_OK(cudaMalloc(&d_qc, num_q_polys * degree * sizeof(fr_t)));
-        unique_fr d_q_coeffs(d_qc);
+        unique_fr d_q_coeffs(d_qc, cuda_fr_deleter{stream});
         CUDA_OK(cudaMemset(d_q_coeffs.get(), 0, num_q_polys * degree * sizeof(fr_t)));
 
         PolynomialBatchGPU q_batch = PolynomialBatchGPU::from_coeffs(

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <vector>
 
+#include <ff/gl64_params.hpp>
 #include <ff/goldilocks.hpp>
 #include <merkle/hasher.hpp>
 #include <prover/types.h>
@@ -127,7 +128,7 @@ TEST(GpuProve, orchestrator_smoke)
 
     std::vector<uint64_t> h_sub(DEGREE);
     {
-        const uint64_t omega = 0x00003fffffffc000ULL;
+        const uint64_t omega = OMEGA[LOG_DEGREE];
         cpp_gl64_t w(omega);
         cpp_gl64_t acc = cpp_gl64_t::one();
         for (uint32_t i = 0; i < DEGREE; i++) {
