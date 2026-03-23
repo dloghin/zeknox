@@ -318,6 +318,15 @@ RustError gpu_prove(
             }
         }
 
+        // Transpose sigma from polynomial-major (after NTT) to row-major for partial products kernel
+        uint64_t *d_sr = nullptr;
+        CUDA_OK(cudaMalloc(&d_sr, degree * config->num_routed_wires * sizeof(uint64_t)));
+        unique_u64 d_sigma_row(d_sr);
+        launch_transpose_trace(
+            d_sigma_trace.get(), d_sigma_row.get(), degree, config->num_routed_wires, stream);
+        gpu.sync();
+        d_sigma_trace.reset();
+
         uint64_t *d_k_raw = nullptr;
         uint64_t *d_su_raw = nullptr;
         CUDA_OK(cudaMalloc(&d_k_raw, config->num_routed_wires * sizeof(uint64_t)));
@@ -333,7 +342,7 @@ RustError gpu_prove(
         unique_u64 d_chunk(d_ch);
         launch_compute_quotient_chunk_products(
             d_wire_row.get(),
-            reinterpret_cast<const uint64_t *>(d_sigma_trace.get()),
+            d_sigma_row.get(),
             d_sub.get(),
             d_k.get(),
             beta.get_val(),
@@ -346,7 +355,7 @@ RustError gpu_prove(
             stream);
         gpu.sync();
 
-        d_sigma_trace.reset();
+        d_sigma_row.reset();
         d_k.reset();
         d_sub.reset();
         d_wire_row.reset();
@@ -442,7 +451,7 @@ RustError gpu_prove(
             return rust_err(EINVAL, "gpu_prove: zeta^n == 1 (invalid opening point)");
         }
 
-        gl64_ext2_t g = gl64_ext2_t::primitive_root_of_unity(config->degree_bits);
+        gl64_ext2_t g(gl64_t(OMEGA[config->degree_bits]), gl64_t::zero());
 
         const size_t c0 = 0;
         const size_t c1 = (size_t)config->num_constants;

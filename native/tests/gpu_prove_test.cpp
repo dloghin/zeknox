@@ -6,6 +6,7 @@
 
 #include <cuda_runtime.h>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include <ff/goldilocks.hpp>
@@ -63,6 +64,43 @@ TEST(GpuProve, rejects_null_args)
         nullptr,
         &sz,
         0);
+    ASSERT_NE(e.code, 0);
+}
+
+TEST(GpuProve, rejects_invalid_config)
+{
+    ProverConfig cfg = {};
+    cfg.degree_bits = 32; // > 31, invalid
+    cfg.num_wires = 4;
+    cfg.num_routed_wires = 2;
+    cfg.quotient_degree_factor = 2;
+    size_t sz = 1024;
+    uint8_t buf[16];
+    RustError e = gpu_prove(
+        (void *)1, nullptr, nullptr, nullptr,
+        (void *)1, (void *)1, &cfg, nullptr, 0,
+        (void *)1, (void *)1, (void *)1,
+        nullptr, 0, nullptr,
+        buf, &sz, 0);
+    ASSERT_NE(e.code, 0);
+}
+
+TEST(GpuProve, rejects_nonzero_fri_rounds)
+{
+    ProverConfig cfg = {};
+    cfg.degree_bits = 4;
+    cfg.num_wires = 4;
+    cfg.num_routed_wires = 2;
+    cfg.quotient_degree_factor = 2;
+    size_t sz = 1024;
+    uint8_t buf[16];
+    uint32_t arity = 1;
+    RustError e = gpu_prove(
+        (void *)1, nullptr, nullptr, nullptr,
+        (void *)1, (void *)1, &cfg, nullptr, 0,
+        (void *)1, (void *)1, (void *)1,
+        &arity, 1, nullptr,
+        buf, &sz, 0);
     ASSERT_NE(e.code, 0);
 }
 
@@ -180,6 +218,40 @@ TEST(GpuProve, orchestrator_smoke)
         0);
     ASSERT_EQ(e1.code, 0) << (e1.message ? e1.message : "");
     ASSERT_EQ(proof_size, proof_cap);
+
+    // Validate proof header (magic, version)
+    ASSERT_GE(proof_size, 12u);
+    uint32_t magic = 0, version = 0;
+    memcpy(&magic, proof.data(), sizeof(uint32_t));
+    memcpy(&version, proof.data() + 4, sizeof(uint32_t));
+    ASSERT_EQ(magic, (uint32_t)0x584e4b5a);
+    ASSERT_EQ(version, 1u);
+
+    // Run a second time with the same inputs and verify deterministic output
+    std::vector<uint8_t> proof2(proof_cap);
+    size_t proof_size2 = proof2.size();
+    RustError e2 = gpu_prove(
+        d_cs,
+        nullptr,
+        nullptr,
+        nullptr,
+        digest,
+        pubh,
+        &cfg,
+        nullptr,
+        0,
+        h_k.data(),
+        h_sub.data(),
+        h_wire.data(),
+        nullptr,
+        0,
+        nullptr,
+        proof2.data(),
+        &proof_size2,
+        0);
+    ASSERT_EQ(e2.code, 0) << (e2.message ? e2.message : "");
+    ASSERT_EQ(proof_size2, proof_size);
+    ASSERT_EQ(proof, proof2) << "Proof output is not deterministic";
 
     cudaFree(d_cs);
 }
