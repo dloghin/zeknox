@@ -157,20 +157,20 @@ __global__ void compute_z_prefix_product_kernel(
     if (threadIdx.x != 0 || blockIdx.x != 0) {
         return;
     }
-    gl64_t z_row = gl64_t::one();
-    z_poly_out[0] = z_row.get_val();
-    for (size_t i = 0; i < degree; ++i) {
+    /* z_poly_out[r] = Z at start of trace row r; valid indices are 0..degree-1 only. */
+    z_poly_out[0] = gl64_t::one().get_val();
+    for (size_t row = 0; row < degree; ++row) {
+        gl64_t z_row = gl64_t(z_poly_out[row]);
         gl64_t cum = gl64_t::one();
         for (size_t k = 0; k < num_chunks; ++k) {
-            gl64_t ck = gl64_t(chunk_products[i * num_chunks + k]);
+            gl64_t ck = gl64_t(chunk_products[row * num_chunks + k]);
             cum = cum * ck;
             gl64_t partial = z_row * cum;
-            partial_products_out[i * num_chunks + k] = partial.get_val();
+            partial_products_out[row * num_chunks + k] = partial.get_val();
         }
-        gl64_t z_next = gl64_t(partial_products_out[i * num_chunks + (num_chunks - 1)]);
-        if (i + 1 < degree) {
-            z_row = z_next;
-            z_poly_out[i + 1] = z_row.get_val();
+        gl64_t z_next = gl64_t(partial_products_out[row * num_chunks + (num_chunks - 1)]);
+        if (row + 1 < degree) {
+            z_poly_out[row + 1] = z_next.get_val();
         }
     }
 }
@@ -258,21 +258,19 @@ void compute_z_prefix_product_host(
         cudaMemcpyDeviceToHost);
 
     using F = cpp_gl64_t;
-    F z_row = F::one();
-    h_z[0] = z_row.get_val();
-
-    for (size_t i = 0; i < degree; ++i) {
+    h_z[0] = F::one().get_val();
+    for (size_t row = 0; row < degree; ++row) {
+        F z_row = F(h_z[row]);
         F cum = F::one();
         for (size_t k = 0; k < num_chunks; ++k) {
-            F ck = F(h_chunk[i * num_chunks + k]);
+            F ck = F(h_chunk[row * num_chunks + k]);
             cum = cum * ck;
             F partial = z_row * cum;
-            h_partial[i * num_chunks + k] = partial.get_val();
+            h_partial[row * num_chunks + k] = partial.get_val();
         }
-        F z_next = F(h_partial[i * num_chunks + (num_chunks - 1)]);
-        if (i + 1 < degree) {
-            z_row = z_next;
-            h_z[i + 1] = z_row.get_val();
+        F z_next = F(h_partial[row * num_chunks + (num_chunks - 1)]);
+        if (row + 1 < degree) {
+            h_z[row + 1] = z_next.get_val();
         }
     }
 
@@ -338,20 +336,19 @@ void partial_products_cpu_reference(
         }
     }
 
-    F z_row = F::one();
-    z_out[0] = z_row.get_val();
-    for (size_t i = 0; i < degree; ++i) {
+    z_out[0] = F::one().get_val();
+    for (size_t row = 0; row < degree; ++row) {
+        F z_row = F(z_out[row]);
         F cum = F::one();
         for (size_t k = 0; k < num_chunks; ++k) {
-            F ck = F(chunk_out[i * num_chunks + k]);
+            F ck = F(chunk_out[row * num_chunks + k]);
             cum = cum * ck;
             F partial = z_row * cum;
-            partial_out[i * num_chunks + k] = partial.get_val();
+            partial_out[row * num_chunks + k] = partial.get_val();
         }
-        F z_next = F(partial_out[i * num_chunks + (num_chunks - 1)]);
-        if (i + 1 < degree) {
-            z_row = z_next;
-            z_out[i + 1] = z_row.get_val();
+        F z_next = F(partial_out[row * num_chunks + (num_chunks - 1)]);
+        if (row + 1 < degree) {
+            z_out[row + 1] = z_next.get_val();
         }
     }
 }
