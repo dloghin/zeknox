@@ -105,6 +105,77 @@ TEST(GpuProve, rejects_nonzero_fri_rounds)
     ASSERT_NE(e.code, 0);
 }
 
+TEST(GpuProve, rejects_null_proof_size)
+{
+    ProverConfig cfg = {};
+    cfg.degree_bits = 4;
+    cfg.num_wires = 4;
+    cfg.num_routed_wires = 2;
+    cfg.quotient_degree_factor = 2;
+    uint8_t buf[16];
+    RustError e = gpu_prove(
+        (void *)1, nullptr, nullptr, nullptr,
+        (void *)1, (void *)1, &cfg, nullptr, 0,
+        (void *)1, (void *)1, (void *)1,
+        nullptr, 0, nullptr,
+        buf, nullptr, 0);
+    ASSERT_NE(e.code, 0);
+}
+
+TEST(GpuProve, rejects_zero_num_wires)
+{
+    ProverConfig cfg = {};
+    cfg.degree_bits = 4;
+    cfg.num_wires = 0;
+    cfg.num_routed_wires = 2;
+    cfg.quotient_degree_factor = 2;
+    size_t sz = 1024;
+    uint8_t buf[16];
+    RustError e = gpu_prove(
+        (void *)1, nullptr, nullptr, nullptr,
+        (void *)1, (void *)1, &cfg, nullptr, 0,
+        (void *)1, (void *)1, (void *)1,
+        nullptr, 0, nullptr,
+        buf, &sz, 0);
+    ASSERT_NE(e.code, 0);
+}
+
+TEST(GpuProve, rejects_zero_num_routed_wires)
+{
+    ProverConfig cfg = {};
+    cfg.degree_bits = 4;
+    cfg.num_wires = 4;
+    cfg.num_routed_wires = 0;
+    cfg.quotient_degree_factor = 2;
+    size_t sz = 1024;
+    uint8_t buf[16];
+    RustError e = gpu_prove(
+        (void *)1, nullptr, nullptr, nullptr,
+        (void *)1, (void *)1, &cfg, nullptr, 0,
+        (void *)1, (void *)1, (void *)1,
+        nullptr, 0, nullptr,
+        buf, &sz, 0);
+    ASSERT_NE(e.code, 0);
+}
+
+TEST(GpuProve, rejects_zero_quotient_degree_factor)
+{
+    ProverConfig cfg = {};
+    cfg.degree_bits = 4;
+    cfg.num_wires = 4;
+    cfg.num_routed_wires = 2;
+    cfg.quotient_degree_factor = 0;
+    size_t sz = 1024;
+    uint8_t buf[16];
+    RustError e = gpu_prove(
+        (void *)1, nullptr, nullptr, nullptr,
+        (void *)1, (void *)1, &cfg, nullptr, 0,
+        (void *)1, (void *)1, (void *)1,
+        nullptr, 0, nullptr,
+        buf, &sz, 0);
+    ASSERT_NE(e.code, 0);
+}
+
 TEST(GpuProve, orchestrator_smoke)
 {
     const uint32_t LOG_DEGREE = 5;
@@ -222,11 +293,42 @@ TEST(GpuProve, orchestrator_smoke)
 
     // Validate proof header (magic, version)
     ASSERT_GE(proof_size, 12u);
-    uint32_t magic = 0, version = 0;
+    uint32_t magic = 0, version = 0, sections = 0;
     memcpy(&magic, proof.data(), sizeof(uint32_t));
     memcpy(&version, proof.data() + 4, sizeof(uint32_t));
+    memcpy(&sections, proof.data() + 8, sizeof(uint32_t));
     ASSERT_EQ(magic, (uint32_t)0x584e4b5a);
     ASSERT_EQ(version, 1u);
+    ASSERT_EQ(sections, 1u);
+
+    // Parse and validate cap lengths and opening set from the proof blob
+    const uint8_t *p = proof.data() + 12;
+    uint64_t wire_cap_len = 0;
+    memcpy(&wire_cap_len, p, sizeof(uint64_t));
+    p += sizeof(uint64_t);
+    ASSERT_GT(wire_cap_len, 0u);
+    p += wire_cap_len * sizeof(uint64_t);
+
+    uint64_t zp_cap_len = 0;
+    memcpy(&zp_cap_len, p, sizeof(uint64_t));
+    p += sizeof(uint64_t);
+    ASSERT_GT(zp_cap_len, 0u);
+    p += zp_cap_len * sizeof(uint64_t);
+
+    uint64_t q_cap_len = 0;
+    memcpy(&q_cap_len, p, sizeof(uint64_t));
+    p += sizeof(uint64_t);
+    ASSERT_GT(q_cap_len, 0u);
+    p += q_cap_len * sizeof(uint64_t);
+
+    uint64_t opening_count = 0;
+    memcpy(&opening_count, p, sizeof(uint64_t));
+    p += sizeof(uint64_t);
+    ASSERT_GT(opening_count, 0u);
+    p += opening_count * sizeof(uint64_t);
+
+    // Verify the parsed size matches the reported proof_size
+    ASSERT_EQ((size_t)(p - proof.data()), proof_size);
 
     // Run a second time with the same inputs and verify deterministic output
     std::vector<uint8_t> proof2(proof_cap);

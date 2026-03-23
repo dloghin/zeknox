@@ -9,6 +9,7 @@
 #ifdef USE_CUDA
 
 #include "utils/cuda_grid_limits.cuh"
+#include "utils/exception.cuh"
 #include "types/int_types.h"
 #include "ff/goldilocks.hpp"
 
@@ -102,6 +103,7 @@ void launch_eval_arithmetic_gate_constraints(
         const_c1,
         constraint_row,
         d_constraint_accumulator);
+    CUDA_OK(cudaGetLastError());
 }
 
 void launch_eval_constant_gate_constraints(
@@ -131,6 +133,7 @@ void launch_eval_constant_gate_constraints(
         const_idx,
         constraint_row,
         d_constraint_accumulator);
+    CUDA_OK(cudaGetLastError());
 }
 
 #ifndef __CUDA_ARCH__

@@ -77,6 +77,7 @@ void launch_precompute_z_h_inverse(
         degree_bits,
         d_z_h_inv,
         lde_size);
+    CUDA_OK(cudaGetLastError());
 }
 
 __global__ void eval_vanishing_poly_kernel(
@@ -143,6 +144,7 @@ void launch_eval_vanishing_poly(
         extra_present,
         d_z_h_inv,
         d_quotient_values_out);
+    CUDA_OK(cudaGetLastError());
 }
 
 #ifndef __CUDA_ARCH__

@@ -8,6 +8,7 @@
 
 #include "partial_products.cuh"
 #include "utils/cuda_grid_limits.cuh"
+#include "utils/exception.cuh"
 #include "types/int_types.h"
 #include "ff/goldilocks.hpp"
 #include "prover/gl64_ext2.cuh"
@@ -145,6 +146,7 @@ void launch_compute_quotient_chunk_products(
         quotient_degree_factor,
         num_chunks,
         d_chunk_products_out);
+    CUDA_OK(cudaGetLastError());
 }
 
 __global__ void compute_z_prefix_product_kernel(
@@ -211,6 +213,7 @@ void launch_compute_z_prefix_product_gpu(
     }
     compute_z_prefix_product_kernel<<<1, 1, 0, stream>>>(
         d_chunk_products, degree, num_chunks, d_partial_products_out, d_z_poly_out);
+    CUDA_OK(cudaGetLastError());
 }
 
 void launch_pack_zs_pp_polynomials(
@@ -230,6 +233,7 @@ void launch_pack_zs_pp_polynomials(
     int blocks = (int)((total + (size_t)threads - 1) / (size_t)threads);
     pack_zs_pp_polynomials_kernel<<<blocks, threads, 0, stream>>>(
         d_z_start, d_partial_row_major, d_out_poly_major, degree, num_chunks);
+    CUDA_OK(cudaGetLastError());
 }
 
 #ifndef __CUDA_ARCH__
