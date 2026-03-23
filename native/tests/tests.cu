@@ -937,10 +937,12 @@ TEST(Gl64Ext2, scalar_mul)
 #include <prover/quotient_poly.cuh>
 #include <prover/fri_fold.cuh>
 #include <prover/opening_set.cuh>
+#include <lib.h>
 #include <ntt/ntt.cuh>
 #include <utils/all_gpus.hpp>
 #include <memory>
 #include <vector>
+#include <cstdint>
 
 /// Frees device memory when the test exits, including on assertion failure or exception.
 struct cuda_fr_deleter {
@@ -1339,6 +1341,13 @@ TEST(PolynomialBatch, c_api_from_values)
     cudaFree(out_digests);
     cudaFree(out_cap);
     cudaFree(gpu_values);
+}
+
+/** Confirms `lib.h` re-exports `prover/prover.h` and `gpu_prove` is linked from prover CMake objects. */
+TEST(LibCMakeIntegration, lib_header_includes_gpu_prove_symbol)
+{
+    void *const addr = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(&gpu_prove));
+    ASSERT_NE(addr, nullptr); /* function address; fails at link time if prover not in CMake */
 }
 
 // ---------- Partial products (permutation argument) kernels ----------

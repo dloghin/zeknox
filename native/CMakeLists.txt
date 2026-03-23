@@ -43,11 +43,10 @@ set(LIB_NAME "zeknox")
 set(EXE_TESTS_CUDA_NAME "tests.exe")
 set(EXE_TESTS_CXX_NAME "tests_cpp.exe")
 
+# Goldilocks (default): unset, gl64, or any value other than BN254
 if (CURVE STREQUAL "BN254")
     set(CURVE_FEATURE "FEATURE_BN254")
-endif ()
-
-if(NOT CURVE)
+else()
     set(CURVE_FEATURE "FEATURE_GOLDILOCKS")
 endif()
 message("zeknox CURVE_FEATURE=${CURVE_FEATURE}, BUILD_MSM=${BUILD_MSM}")
