@@ -129,7 +129,8 @@ set(LIB_CUDA_SRC
     prover/gate_constraints.cu
     prover/quotient_poly.cu
     prover/fri_fold.cu
-    prover/opening_set.cu)
+    prover/opening_set.cu
+    prover/prover.cu)
 
 if (BUILD_MSM)
     list(APPEND LIB_CUDA_SRC msm/msm.cu)
@@ -165,7 +166,7 @@ target_link_libraries(${LIB_NAME} PRIVATE cudart)
 
 # Build tests?
 if (BUILD_TESTS)
-add_executable(${EXE_TESTS_CUDA_NAME} tests/tests.cu $<TARGET_OBJECTS:${LIB_CXX_NAME}> $<TARGET_OBJECTS:${LIB_CUDA_NAME}>)
+add_executable(${EXE_TESTS_CUDA_NAME} tests/tests.cu tests/gpu_prove_test.cpp $<TARGET_OBJECTS:${LIB_CXX_NAME}> $<TARGET_OBJECTS:${LIB_CUDA_NAME}>)
 target_compile_definitions(${EXE_TESTS_CUDA_NAME} PRIVATE USE_CUDA ${CURVE_FEATURE})
 target_include_directories(${EXE_TESTS_CUDA_NAME} PRIVATE ${LIB_INC})
 set_target_properties(${EXE_TESTS_CUDA_NAME} PROPERTIES CUDA_ARCHITECTURES "${CUDA_ARCH}")
