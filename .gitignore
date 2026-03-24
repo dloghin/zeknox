@@ -16,3 +16,4 @@ wrappers/cpp/depends/*.xz
 scripts/generated/
 .ai_tasks/
 plonky2
+CLAUDE.md
