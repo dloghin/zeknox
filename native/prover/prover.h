@@ -33,6 +33,9 @@
  *
  * If `num_fri_rounds == 0`, FRI is skipped and the proof contains Merkle caps plus flattened openings only.
  * If `num_fri_rounds > 0`, the call fails until composition + FRI wiring is completed.
+ *
+ * If `proof_output` is too small, returns `RustError.code == E2BIG` (POSIX errno) and sets `*proof_size`
+ * to the required output size in bytes.
  */
 EXTERN RustError gpu_prove(
     const void *constants_sigmas_coeffs_gpu,

@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cstring>
@@ -264,7 +265,7 @@ TEST(GpuProve, orchestrator_smoke)
         tiny.data(),
         &proof_cap,
         0);
-    ASSERT_NE(e0.code, 0);
+    ASSERT_EQ(e0.code, E2BIG);
     ASSERT_GT(proof_cap, tiny.size());
 
     std::vector<uint8_t> proof(proof_cap);

@@ -64,7 +64,8 @@ fn bench_gpu_ntt_batch(c: &mut Criterion) {
                         device_data.as_mut_ptr(),
                         log_ntt_size,
                         cfg.clone(),
-                    ).unwrap()
+                    )
+                    .unwrap()
                 })
             },
         );

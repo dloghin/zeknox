@@ -7,10 +7,22 @@ pub mod device;
 #[cfg(feature = "cuda")]
 pub mod error;
 #[cfg(feature = "cuda")]
+pub mod prover;
+#[cfg(feature = "cuda")]
 pub mod types;
 
 #[cfg(feature = "cuda")]
 use crate::types::{NTTConfig, TransposeConfig};
+
+#[cfg(feature = "cuda")]
+pub use prover::{
+    gpu_prove, gpu_prove_blob, GateInfo, GpuProveBlobArgs, ProverConfig,
+    DEFAULT_GPU_PROOF_BUFFER_BYTES, GPU_PROOF_MAGIC, GPU_PROVE_ERR_PROOF_BUFFER_TOO_SMALL,
+    NUM_HASH_OUT_ELTS,
+};
+
+#[cfg(all(feature = "cuda", feature = "plonky2"))]
+pub use prover::{gate_type_id, gpu_prove_safe, plonky2_gate_infos};
 
 #[cfg(feature = "cuda")]
 extern "C" {
@@ -190,7 +202,12 @@ pub fn ntt_batch<T>(
     Ok(())
 }
 
-pub fn intt_batch<T>(device_id: usize, inout: *mut T, log_n_size: usize, cfg: NTTConfig) -> Result<(), String> {
+pub fn intt_batch<T>(
+    device_id: usize,
+    inout: *mut T,
+    log_n_size: usize,
+    cfg: NTTConfig,
+) -> Result<(), String> {
     let err = unsafe {
         compute_batched_ntt(
             device_id,

@@ -93,7 +93,8 @@ fn bench_multi_gpu_lde_batch(c: &mut Criterion) {
                         log_n_sizes,
                         total_num_input_elements,
                         total_num_output_elements,
-                    ).unwrap()
+                    )
+                    .unwrap()
                 })
             },
         );
@@ -110,7 +111,8 @@ fn bench_multi_gpu_lde_batch(c: &mut Criterion) {
                         log_n_sizes,
                         total_num_input_elements,
                         total_num_output_elements,
-                    ).unwrap()
+                    )
+                    .unwrap()
                 })
             },
         );

@@ -32,7 +32,10 @@ fn build_device_wrapper() {
         .to_string_lossy()
         .to_string();
     let binding_path = PathBuf::from("src/device").join("bindings.rs");
-    println!("cargo:rustc-link-search=native={}", cuda_root.join("lib64").to_str().unwrap());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        cuda_root.join("lib64").to_str().unwrap()
+    );
     println!("cargo:rustc-link-lib=cudart");
     println!("cargo:rerun-if-changed={}", cuda_runtime_api_path);
     println!(
@@ -106,7 +109,7 @@ fn build_lib() {
         if !altlibfile.exists() {
             // build the lib
             assert!(env::set_current_dir(&srcdir).is_ok());
-            Command::new("./build-release-gl64.sh")
+            Command::new("./scripts/build-release-gl64.sh")
                 .output()
                 .expect("failed to execute process");
             assert!(env::set_current_dir(&rootdir).is_ok());
@@ -120,7 +123,10 @@ fn build_lib() {
     println!("cargo:rustc-link-search={}", libdir.to_str().unwrap());
 
     // Static lib
-    println!("cargo:rustc-link-search=native={}", cuda_home().join("lib64").to_str().unwrap());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        cuda_home().join("lib64").to_str().unwrap()
+    );
     println!("cargo:rustc-link-search=native={}", "/usr/local/lib");
     println!("cargo:rustc-link-lib=cudart");
     println!("cargo:rustc-link-lib=stdc++");

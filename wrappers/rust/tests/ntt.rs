@@ -45,7 +45,8 @@ fn test_ntt_batch_gl64_consistency_with_plonky2() {
         gpu_buffer.as_mut_ptr(),
         lg_domain_size,
         cfg,
-    ).unwrap();
+    )
+    .unwrap();
 
     let plonky2_ntt_input1 = v1.clone();
     let coeffs1 = plonky2_ntt_input1
@@ -96,14 +97,16 @@ fn test_ntt_batch_intt_batch_gl64_self_consistency() {
         gpu_buffer.as_mut_ptr(),
         lg_domain_size,
         cfg.clone(),
-    ).unwrap();
+    )
+    .unwrap();
 
     intt_batch(
         DEFAULT_GPU as usize,
         gpu_buffer.as_mut_ptr(),
         lg_domain_size,
         cfg.clone(),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(v1, gpu_buffer);
 }
 
@@ -128,7 +131,8 @@ fn test_intt_batch_gl64_consistency_with_plonky2() {
         gpu_buffer.as_mut_ptr(),
         lg_domain_size,
         cfg,
-    ).unwrap();
+    )
+    .unwrap();
 
     let plonky2_intt_input1 = input1.clone();
     let values1 = plonky2_intt_input1
@@ -315,7 +319,8 @@ fn test_transpose_rev() {
         device_data.as_mut_ptr(),
         lg_domain_size,
         cfg.clone(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut host_output = vec![0; total_elements];
     // println!("start copy to host");
@@ -340,7 +345,8 @@ fn test_ntt_batch_with_coset() {
         DEFAULT_GPU as usize,
         lg_domain_size,
         GoldilocksField::coset_shift().to_canonical_u64(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let v1: Vec<u64> = (0..domain_size).map(|_| random_fr()).collect();
     let v2: Vec<u64> = (0..domain_size).map(|_| random_fr()).collect();
@@ -356,7 +362,8 @@ fn test_ntt_batch_with_coset() {
         gpu_buffer.as_mut_ptr(),
         lg_domain_size,
         cfg.clone(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let cpu_buffer = v1.clone();
 
@@ -402,7 +409,8 @@ fn test_compute_batched_lde() {
         DEFAULT_GPU as usize,
         lg_domain_size,
         GoldilocksField::coset_shift().to_canonical_u64(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let input_size = 1usize << lg_n;
 
@@ -442,7 +450,8 @@ fn test_compute_batched_lde() {
         cpu_polys_coeffs.as_mut_ptr(),
         lg_domain_size,
         cfg,
-    ).unwrap();
+    )
+    .unwrap();
 
     let cpu_outputs = cpu_polys_coeffs
         .iter()
@@ -474,7 +483,8 @@ fn test_compute_batched_lde() {
         gpu_buffer.as_mut_ptr(),
         lg_n,
         cfg_lde,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(cpu_outputs, gpu_lde_output);
 }
 
@@ -492,7 +502,8 @@ fn test_compute_batched_lde_data_on_device() {
         DEFAULT_GPU as usize,
         lg_domain_size,
         GoldilocksField::coset_shift().to_canonical_u64(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let total_num_input_elements = input_domain_size * batches;
     let total_num_output_elements = output_domain_size * batches;
@@ -531,7 +542,8 @@ fn test_compute_batched_lde_data_on_device() {
         device_input_data.as_mut_ptr(),
         lg_n,
         cfg_lde,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut host_output_first = vec![0; output_domain_size];
     let mut host_output_last = vec![0; output_domain_size];
@@ -564,7 +576,8 @@ fn test_compute_batched_lde_data_on_device() {
         lde_copy_buffer.as_mut_ptr(),
         lg_n,
         cfg_lde_copy,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(
         gpu_lde_output_copy[0..output_domain_size],
         host_output_first
@@ -593,7 +606,8 @@ fn test_compute_batched_lde_multi_gpu_data_on_one_gpu() {
             i as usize,
             lg_domain_size,
             GoldilocksField::coset_shift().to_canonical_u64(),
-        ).unwrap();
+        )
+        .unwrap();
     }
     // lde rust allocate to gpu prior to api call
     let mut device_output_data: HostOrDeviceSlice<'_, u64> =
@@ -632,7 +646,8 @@ fn test_compute_batched_lde_multi_gpu_data_on_one_gpu() {
             lg_n,
             total_num_input_elements,
             total_num_output_elements,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut lde_multi_output = vec![0; batches * output_domain_size];
         let _ = device_output_data.copy_to_host_offset(
@@ -654,7 +669,8 @@ fn test_compute_batched_lde_multi_gpu_data_on_one_gpu() {
             host_inputs_copy.as_mut_ptr(),
             lg_n,
             cfg_lde_copy,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(lde_single_output == lde_multi_output);
     }

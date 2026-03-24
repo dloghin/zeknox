@@ -10,11 +10,16 @@
 
 #ifdef USE_CUDA
 
-/** Plonky2-style gate kinds (subset; extend as needed). */
+/** Plonky2-style gate kinds — IDs must match `gate_type_id` in `wrappers/rust/src/prover/plonky2.rs`. */
 enum class GateType : uint32_t {
     ArithmeticGate = 0,
-    ConstantGate = 1,
-    NoopGate = 2,
+    ArithmeticExtensionGate = 1,
+    ConstantGate = 2,
+    PublicInputGate = 3,
+    PoseidonGate = 4,
+    BaseSumGate = 5,
+    RandomAccessGate = 6,
+    NoopGate = 7,
 };
 
 /**
