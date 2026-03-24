@@ -75,20 +75,14 @@ pub fn plonky2_gate_infos<F: RichField + Extendable<D>, const D: usize>(
 fn hash_out_to_digest<H: GenericHashOut<F>, F: RichField>(
     h: &H,
 ) -> Result<[u64; NUM_HASH_OUT_ELTS], String> {
-    let v = h.to_vec();
-    if v.len() != NUM_HASH_OUT_ELTS {
-        return Err(format!(
+    let arr: [F; NUM_HASH_OUT_ELTS] = h.to_vec().try_into().map_err(|v: Vec<F>| {
+        format!(
             "GPU prover expects {} Goldilocks limbs in the hash; got {}",
             NUM_HASH_OUT_ELTS,
             v.len()
-        ));
-    }
-    Ok([
-        v[0].to_canonical_u64(),
-        v[1].to_canonical_u64(),
-        v[2].to_canonical_u64(),
-        v[3].to_canonical_u64(),
-    ])
+        )
+    })?;
+    Ok(arr.map(|f| f.to_canonical_u64()))
 }
 
 /// Serializes Plonky2 circuit/witness data and runs [`super::gpu_prove_blob`].
@@ -129,22 +123,22 @@ where
 
     let degree = common_data.degree();
     let nw = common_data.config.num_wires;
-    let mut wire_values_flat: Vec<u64> = Vec::with_capacity(nw * degree);
-    for w in 0..nw {
-        for r in 0..degree {
-            wire_values_flat.push(witness.get_wire(r, w).to_canonical_u64());
-        }
-    }
 
-    let mut k_is: Vec<u64> = Vec::with_capacity(common_data.k_is.len());
-    for x in &common_data.k_is {
-        k_is.push(x.to_canonical_u64());
-    }
+    let wire_values_flat: Vec<u64> = (0..nw)
+        .flat_map(|w| (0..degree).map(move |r| witness.get_wire(r, w).to_canonical_u64()))
+        .collect();
 
-    let mut subgroup: Vec<u64> = Vec::with_capacity(prover_data.subgroup.len());
-    for x in &prover_data.subgroup {
-        subgroup.push(x.to_canonical_u64());
-    }
+    let k_is: Vec<u64> = common_data
+        .k_is
+        .iter()
+        .map(|x| x.to_canonical_u64())
+        .collect();
+
+    let subgroup: Vec<u64> = prover_data
+        .subgroup
+        .iter()
+        .map(|x| x.to_canonical_u64())
+        .collect();
 
     let circuit_digest = hash_out_to_digest(&prover_data.circuit_digest)?;
     let public_inputs_hash =

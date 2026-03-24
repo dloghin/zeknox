@@ -480,7 +480,8 @@ RustError gpu_prove(
 
         if (*proof_size < need) {
             *proof_size = need;
-            return rust_err(EINVAL, "gpu_prove: proof_output buffer too small");
+            /* E2BIG: `proof_output` too small; `*proof_size` holds required byte count (Rust checks libc::E2BIG). */
+            return rust_err(E2BIG, "gpu_prove: proof_output buffer too small");
         }
 
         std::vector<gl64_t> wcap(cap_wire_el);

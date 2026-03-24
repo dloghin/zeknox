@@ -13,8 +13,12 @@ pub const NUM_HASH_OUT_ELTS: usize = 4;
 /// Magic `0x584e4b5a` (`ZKXN` LE) at the start of the GPU orchestrator proof blob (`prover.cu`).
 pub const GPU_PROOF_MAGIC: u32 = 0x584e4b5a;
 
-/// Conservative default buffer for [`gpu_prove_blob`]; resize if the API returns a size hint error.
+/// Conservative default buffer for [`gpu_prove_blob`]; resize if the API returns [`libc::E2BIG`].
 pub const DEFAULT_GPU_PROOF_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+
+/// [`gpu_prove`] sets `*proof_size` to the required byte count when `RustError.code ==` this value
+/// (POSIX `E2BIG`: proof output buffer too small).
+pub const GPU_PROVE_ERR_PROOF_BUFFER_TOO_SMALL: i32 = libc::E2BIG;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,8 +91,8 @@ pub struct GpuProveBlobArgs<'a> {
 
 /// Validates slice lengths, allocates a buffer (up to `max_bytes`), and invokes [`gpu_prove`].
 ///
-/// On `EINVAL` with an undersized buffer, the native prover sets `*proof_size` to the required
-/// byte count; this function grows the buffer once and retries.
+/// On [`GPU_PROVE_ERR_PROOF_BUFFER_TOO_SMALL`] ([`libc::E2BIG`]), the native prover sets `*proof_size`
+/// to the required byte count; this function grows the buffer once and retries.
 pub fn gpu_prove_blob(args: GpuProveBlobArgs<'_>, max_bytes: usize) -> Result<Vec<u8>, String> {
     let degree = 1usize
         .checked_shl(args.config.degree_bits)
@@ -167,7 +171,7 @@ pub fn gpu_prove_blob(args: GpuProveBlobArgs<'_>, max_bytes: usize) -> Result<Ve
         }
 
         let msg = String::from(&err);
-        if attempt == 0 && msg.contains("proof_output buffer too small") && proof_size > buf.len() {
+        if attempt == 0 && err.code == libc::E2BIG && proof_size > buf.len() {
             if proof_size > max_bytes {
                 return Err(format!(
                     "gpu_prove_blob: need {} bytes (max {})",
