@@ -1330,6 +1330,13 @@ TEST(LibCMakeIntegration, lib_header_includes_gpu_prove_symbol)
     ASSERT_NE(addr, nullptr); /* function address; fails at link time if prover not in CMake */
 }
 
+/** `ProverConfig` / `GateInfo` must match `#[repr(C)]` structs in `wrappers/rust/src/prover/mod.rs`. */
+TEST(LibCMakeIntegration, prover_ffi_struct_layout_matches_rust)
+{
+    EXPECT_EQ(sizeof(ProverConfig), static_cast<size_t>(44));
+    EXPECT_EQ(sizeof(GateInfo), static_cast<size_t>(24));
+}
+
 // ---------- Partial products (permutation argument) kernels ----------
 // Goldilocks prime (avoid cpp_gl64_t arithmetic in this .cu file — nvcc + u128 quirk).
 
