@@ -211,7 +211,7 @@ pub fn zkxn_opening_limbs_for_gpu_prover_config(config: &ProverConfig) -> usize 
     };
     let n_z = 1usize;
     let n_zn = 1usize;
-    let n_q = config.quotient_degree_factor.max(1) as usize;
+    let n_q = (config.num_challenges as usize) * (config.quotient_degree_factor.max(1) as usize);
     let n_ext = n_c + n_s + n_w + n_z + n_zn + num_chunks + n_q;
     2 * n_ext
 }
