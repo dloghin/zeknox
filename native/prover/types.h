@@ -34,6 +34,15 @@ typedef struct GateInfo {
     uint32_t group_end;
     uint32_t num_selectors;
     uint32_t num_constraints;
+    /* Optional wiring metadata for native quotient/gate-eval kernels. */
+    uint32_t wire_0;
+    uint32_t wire_1;
+    uint32_t wire_2;
+    uint32_t wire_3;
+    uint32_t const_0;
+    uint32_t const_1;
+    uint32_t aux_0;
+    uint32_t aux_1;
 } GateInfo;
 
 #ifdef __cplusplus

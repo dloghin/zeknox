@@ -244,7 +244,8 @@ RustError gpu_prove(
     const size_t num_chunks = partial_products_num_chunks(config->num_routed_wires, config->quotient_degree_factor);
     const size_t num_zp_polys = 1u + num_chunks;
     const uint32_t qfac = std::max(1u, config->quotient_degree_factor);
-    const size_t num_q_polys = (size_t)qfac;
+    // Plonky2 expects `num_challenges * quotient_degree_factor` quotient chunks.
+    const size_t num_q_polys = (size_t)config->num_challenges * (size_t)qfac;
 
     try {
         init_ntt_for_prove(config->degree_bits + config->rate_bits + 4u, gpu_id);
@@ -401,7 +402,7 @@ RustError gpu_prove(
             challenger.observe_cap(cap_host.data(), cap_host.size());
         }
 
-        /* Alpha challenges for quotient mixing (Plonky2 transcript); quotient kernel not wired yet. */
+        /* Alpha challenges for quotient mixing (Plonky2 transcript). */
         (void)challenger.get_n_challenges(config->num_challenges);
 
         PolynomialBatchGPU cs_batch = PolynomialBatchGPU::from_coeffs(
@@ -416,6 +417,8 @@ RustError gpu_prove(
         fr_t *d_qc = nullptr;
         CUDA_OK(cudaMalloc(&d_qc, num_q_polys * degree * sizeof(fr_t)));
         unique_fr d_q_coeffs(d_qc, cuda_fr_deleter{stream});
+        // Placeholder until gate-constraint quotient wiring lands:
+        // keep all quotient chunks at zero, but in the correct Plonky2 shape.
         CUDA_OK(cudaMemset(d_q_coeffs.get(), 0, num_q_polys * degree * sizeof(fr_t)));
 
         PolynomialBatchGPU q_batch = PolynomialBatchGPU::from_coeffs(
