@@ -24,6 +24,8 @@ cargo test --features=gl64 --test ntt -- test_compute_batched_lde_data_on_device
 cargo test --features=gl64 --test ntt -- test_transpose_rev --exact --nocapture
 cargo test --features=gl64 --test merkle_tree -- --exact --nocapture
 
+cargo test --features=gl64,plonky2 --test prover fibonacci::fibonacci_gpu_blob_and_plonky2_verify -- --exact --nocapture
+
 if [ $NUM_OF_GPUS -gt 1 ]; then
     cargo test --features=gl64 --test ntt -- test_compute_batched_lde_multi_gpu_data_on_one_gpu --exact --nocapture
 fi

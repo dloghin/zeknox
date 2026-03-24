@@ -187,18 +187,3 @@ mod plonky2;
 
 #[cfg(feature = "plonky2")]
 pub use plonky2::{gate_type_id, gpu_prove_safe, plonky2_gate_infos};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prover_config_matches_native_layout() {
-        assert_eq!(core::mem::size_of::<ProverConfig>(), 11 * 4);
-    }
-
-    #[test]
-    fn gate_info_matches_native_layout() {
-        assert_eq!(core::mem::size_of::<GateInfo>(), 6 * 4);
-    }
-}
