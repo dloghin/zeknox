@@ -45,7 +45,8 @@ fn ntt_batch_with_lg(batches: usize, log_ntt_size: usize) {
         device_data.as_mut_ptr(),
         log_ntt_size,
         cfg.clone(),
-    ).unwrap();
+    )
+    .unwrap();
 
     println!("total time spend: {:?}", start.elapsed());
 }
