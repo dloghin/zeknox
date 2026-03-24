@@ -267,8 +267,6 @@ void fill_digests_buf_linear_gpu_with_gpu_ptr(
     u64 hash_type,
     u64 gpu_id)
 {
-    assert(leaf_size >= NUM_HASH_OUT_ELTS);
-
     switch (hash_type)
     {
     case HashPoseidon:
@@ -507,8 +505,6 @@ void fill_digests_buf_linear_multigpu_with_gpu_ptr(
     assert(digests_buf_gpu_ptr != NULL);
     assert(cap_buf_gpu_ptr != NULL);
     assert(leaves_buf_gpu_ptr != NULL);
-
-    assert(leaf_size >= NUM_HASH_OUT_ELTS);
 
     switch (hash_type)
     {

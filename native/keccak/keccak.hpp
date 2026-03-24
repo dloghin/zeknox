@@ -7,6 +7,10 @@
 
 #include "merkle/hasher.hpp"
 
+#ifdef USE_CUDA
+void keccak_hash_on_gpu(u64 *input, u32 size, u64 *hash);
+#endif
+
 class KeccakHasher : public Hasher {
 
 public:

@@ -50,27 +50,6 @@ void printhash(u64 *h)
 #include <utils/cuda_utils.cuh>
 #include <utils/host_bit.hpp>
 
-__global__ void keccak_gpu_driver(u64 *input, u32 size, u64 *hash)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid > 0)
-        return;
-
-    KeccakHasher::gpu_hash_one((gl64_t *)input, size, (gl64_t *)hash);
-}
-
-void keccak_hash_on_gpu(u64 *input, u32 size, u64 *hash)
-{
-    u64 *gpu_data, *gpu_hash;
-    CHECKCUDAERR(cudaMalloc(&gpu_data, size * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&gpu_hash, HASH_SIZE_U64 * sizeof(u64)));
-    CHECKCUDAERR(cudaMemcpy(gpu_data, input, size * sizeof(u64), cudaMemcpyHostToDevice));
-    keccak_gpu_driver<<<1, 1>>>(gpu_data, size, gpu_hash);
-    CHECKCUDAERR(cudaMemcpy(hash, gpu_hash, HASH_SIZE_U64 * sizeof(u64), cudaMemcpyDeviceToHost));
-    CHECKCUDAERR(cudaFree(gpu_data));
-    CHECKCUDAERR(cudaFree(gpu_hash));
-}
-
 __global__ void monolith_hash(u64 *in, u64 *out, u32 n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -193,9 +172,10 @@ TEST(LIBCUDA, keccak_test)
 #endif
         for (int j = 0; j < HASH_SIZE_U64; j++)
         {
-            assert(h1[j] == expected[size][j]);
+            ASSERT_EQ(h1[j], expected[size][j]) << "cpu size=" << size << " j=" << j;
 #ifdef USE_CUDA
-            assert(h2[j] == expected[size][j]);
+            ASSERT_EQ(h2[j], expected[size][j])
+                << "gpu size=" << size << " j=" << j << " h2[j]=" << h2[j] << " exp=" << expected[size][j];
 #endif
         }
     }
