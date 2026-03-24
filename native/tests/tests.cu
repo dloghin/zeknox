@@ -49,6 +49,7 @@ void printhash(u64 *h)
 
 #include <utils/cuda_utils.cuh>
 #include <utils/host_bit.hpp>
+#include <prover/gate_constraints.cuh>
 
 __global__ void monolith_hash(u64 *in, u64 *out, u32 n)
 {
@@ -1335,6 +1336,19 @@ TEST(LibCMakeIntegration, prover_ffi_struct_layout_matches_rust)
 {
     EXPECT_EQ(sizeof(ProverConfig), static_cast<size_t>(44));
     EXPECT_EQ(sizeof(GateInfo), static_cast<size_t>(24));
+}
+
+/** GateType enum values must match Rust `gate_type_id` mapping in `wrappers/rust/src/prover/plonky2.rs`. */
+TEST(LibCMakeIntegration, gate_type_enum_matches_rust)
+{
+    EXPECT_EQ(static_cast<uint32_t>(GateType::ArithmeticGate), 0u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::ArithmeticExtensionGate), 1u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::ConstantGate), 2u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::PublicInputGate), 3u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::PoseidonGate), 4u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::BaseSumGate), 5u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::RandomAccessGate), 6u);
+    EXPECT_EQ(static_cast<uint32_t>(GateType::NoopGate), 7u);
 }
 
 // ---------- Partial products (permutation argument) kernels ----------

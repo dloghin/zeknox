@@ -109,7 +109,7 @@ fn build_lib() {
         if !altlibfile.exists() {
             // build the lib
             assert!(env::set_current_dir(&srcdir).is_ok());
-            Command::new("./build-release-gl64.sh")
+            Command::new("./scripts/build-release-gl64.sh")
                 .output()
                 .expect("failed to execute process");
             assert!(env::set_current_dir(&rootdir).is_ok());
