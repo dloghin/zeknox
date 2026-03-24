@@ -192,8 +192,7 @@ void keccak_hash_on_gpu(u64 *input, u32 size, u64 *hash)
 {
     u64 *gpu_data, *gpu_hash;
     CHECKCUDAERR(cudaMalloc(&gpu_data, size * sizeof(u64)));
-    CHECKCUDAERR(cudaMalloc(&gpu_hash, HASH_SIZE_U64 * sizeof(u64)));
-    CHECKCUDAERR(cudaMemset(gpu_hash, 0, HASH_SIZE_U64 * sizeof(u64)));
+    CHECKCUDAERR(cudaMalloc(&gpu_hash, HASH_SIZE_U64 * sizeof(u64)));    
     CHECKCUDAERR(cudaMemcpy(gpu_data, input, size * sizeof(u64), cudaMemcpyHostToDevice));
     keccak_gpu_driver<<<1, 1>>>(gpu_data, size, gpu_hash);
     CHECKCUDAERR(cudaDeviceSynchronize());
