@@ -6,7 +6,7 @@ if ! [ -d "scripts" ]; then
 fi
 
 CAP=`./scripts/configure.sh | grep capability | cut -d ' ' -f 3`
-
+# If deviceQuery/configure fails, CMake still defaults to multi-arch (see CMakeLists.txt).
 rm -rf build
 if [ -z "$CAP" ]; then
 cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON

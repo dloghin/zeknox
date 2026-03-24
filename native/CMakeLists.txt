@@ -15,7 +15,12 @@ endif()
 
 # Options
 option(USE_CUDA "Enable CUDA code (ON by default)" ON)
-set(CUDA_ARCH "89" CACHE STRING "CUDA architecture")
+# Full device debug (-G) makes stack-heavy kernels fail at runtime in Debug builds.
+option(CUDA_DEVICE_DEBUG "Pass -G to nvcc for full CUDA device debug (large stacks; may break kernels)" OFF)
+# Default to multiple SASS targets so Ampere (sm_86) etc. do not fall back to
+# newer PTX that the installed driver may reject ("unsupported toolchain").
+# Override with -DCUDA_ARCH=… or let scripts/configure.sh set the local GPU.
+set(CUDA_ARCH "86;89;90" CACHE STRING "CUDA architecture(s), e.g. 86 or 86;89;90")
 message("CUDA_ARCH=${CUDA_ARCH}")
 option(USE_AVX "Enable AVX acceleration" OFF)
 option(USE_AVX512 "Enable AVX512 (and AVX) acceleration" OFF)
@@ -43,11 +48,10 @@ set(LIB_NAME "zeknox")
 set(EXE_TESTS_CUDA_NAME "tests.exe")
 set(EXE_TESTS_CXX_NAME "tests_cpp.exe")
 
+# Goldilocks (default): unset, gl64, or any value other than BN254
 if (CURVE STREQUAL "BN254")
     set(CURVE_FEATURE "FEATURE_BN254")
-endif ()
-
-if(NOT CURVE)
+else()
     set(CURVE_FEATURE "FEATURE_GOLDILOCKS")
 endif()
 message("zeknox CURVE_FEATURE=${CURVE_FEATURE}, BUILD_MSM=${BUILD_MSM}")
@@ -55,11 +59,17 @@ message("zeknox CURVE_FEATURE=${CURVE_FEATURE}, BUILD_MSM=${BUILD_MSM}")
 # CUDA support
 if(USE_CUDA)
 
-# enable CUDA debug
+# Debug: host + lineinfo for device; avoid -G unless CUDA_DEVICE_DEBUG (full device
+# debug breaks stack-heavy code paths such as Poseidon permutations).
 if(CMAKE_BUILD_TYPE MATCHES Debug)
-    message("debug mode (enable CUDA debug)")
-    set(CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS} "-g -G -maxrregcount=168")
-    set(CUDA_NVCC_FLAGS "-g -G -maxrregcount=168")
+    message("debug mode (CUDA: -g -lineinfo; CUDA_DEVICE_DEBUG=${CUDA_DEVICE_DEBUG})")
+    set(_CUDA_DEBUG_FLAGS "-g" "-lineinfo" "-maxrregcount=168")
+    if(CUDA_DEVICE_DEBUG)
+        list(APPEND _CUDA_DEBUG_FLAGS "-G")
+    endif()
+    string(REPLACE ";" " " _CUDA_DEBUG_FLAGS_STR "${_CUDA_DEBUG_FLAGS}")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${_CUDA_DEBUG_FLAGS_STR}")
+    set(CUDA_NVCC_FLAGS "${_CUDA_DEBUG_FLAGS_STR}")
 endif()
 
 if(NOT CMAKE_CUDA_TOOLKIT_ROOT_DIR)
@@ -163,6 +173,7 @@ set_target_properties(${LIB_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 set_target_properties(${LIB_NAME} PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 target_compile_options(${LIB_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-dc>)
 target_link_libraries(${LIB_NAME} PRIVATE cudart)
+target_link_options(${LIB_NAME} PRIVATE $<DEVICE_LINK:-Xnvlink -suppress-stack-size-warning>)
 
 # Build tests?
 if (BUILD_TESTS)
@@ -174,6 +185,7 @@ set_target_properties(${EXE_TESTS_CUDA_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATI
 set_target_properties(${EXE_TESTS_CUDA_NAME} PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 target_compile_options(${EXE_TESTS_CUDA_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-dc>)
 target_link_libraries(${EXE_TESTS_CUDA_NAME} PRIVATE gtest gomp)
+target_link_options(${EXE_TESTS_CUDA_NAME} PRIVATE $<DEVICE_LINK:-Xnvlink -suppress-stack-size-warning>)
 set_target_properties(${EXE_TESTS_CUDA_NAME} PROPERTIES DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX})
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${EXE_TESTS_CUDA_NAME} PUBLIC OpenMP::OpenMP_CXX)

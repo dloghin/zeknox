@@ -51,4 +51,10 @@ EXTERN RustError compute_transpose_rev(size_t device_id, void *output, void *inp
 EXTERN RustError compute_naive_transpose_rev(size_t device_id, void *output, void *input, uint32_t lg_n,
                                              NTT_TransposeConfig cfg);
 
+/* Prover orchestrator C API (`gpu_prove`) */
+#pragma push_macro("EXTERN")
+#undef EXTERN
+#include <prover/prover.h>
+#pragma pop_macro("EXTERN")
+
 #endif // __ZEKNOX_CUDA_LIB_H__

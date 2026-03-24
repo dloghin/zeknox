@@ -84,8 +84,8 @@ public:
     DEVICE INLINE static void gpu_hash_one_with_permutation_template(gl64_t *inputs, u32 num_inputs, gl64_t *hash)
     {
         /*
-         * NOTE: to avoid a branch, we assume the input size is > NUM_HASH_OUT_ELTS. For inputs with size < NUM_HASH_OUT_ELTS,
-         * this function produces incorrect output. This case is filered out by an assert in Merkle Tree building functions.
+         * For num_inputs <= NUM_HASH_OUT_ELTS, match CPU (poseidon_permutation.hpp): copy inputs into the digest and
+         * zero-pad; no sponge. Larger inputs use the sponge (RATE-sized absorbs + squeeze).
          */
 #if 1
         if (num_inputs <= NUM_HASH_OUT_ELTS)
