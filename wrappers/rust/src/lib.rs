@@ -22,7 +22,12 @@ pub use prover::{
 };
 
 #[cfg(all(feature = "cuda", feature = "plonky2"))]
-pub use prover::{gate_type_id, gpu_prove_safe, plonky2_gate_infos};
+pub use prover::{
+    gate_type_id, gpu_prove_safe, parse_zkxn_gpu_blob, plonky2_gate_infos,
+    proof_with_public_inputs_from_zkxn_blob, verified_proof_matching_zkxn_blob,
+    zkxn_opening_limbs_for_gpu_prover_config, zkxn_opening_limbs_for_plonky2_common,
+    ParsedZkxnBlob, ZkxnBlobError,
+};
 
 #[cfg(feature = "cuda")]
 extern "C" {

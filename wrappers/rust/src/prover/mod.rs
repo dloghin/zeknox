@@ -190,4 +190,14 @@ pub fn gpu_prove_blob(args: GpuProveBlobArgs<'_>, max_bytes: usize) -> Result<Ve
 mod plonky2;
 
 #[cfg(feature = "plonky2")]
+mod zkxn_blob;
+
+#[cfg(feature = "plonky2")]
 pub use plonky2::{gate_type_id, gpu_prove_safe, plonky2_gate_infos};
+
+#[cfg(feature = "plonky2")]
+pub use zkxn_blob::{
+    parse_zkxn_gpu_blob, proof_with_public_inputs_from_zkxn_blob,
+    verified_proof_matching_zkxn_blob, zkxn_opening_limbs_for_gpu_prover_config,
+    zkxn_opening_limbs_for_plonky2_common, ParsedZkxnBlob, ZkxnBlobError,
+};

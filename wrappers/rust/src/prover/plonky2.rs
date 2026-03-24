@@ -88,8 +88,12 @@ fn hash_out_to_digest<H: GenericHashOut<F>, F: RichField>(
 /// Serializes Plonky2 circuit/witness data and runs [`super::gpu_prove_blob`].
 ///
 /// Returns the **native GPU proof blob** (magic [`super::GPU_PROOF_MAGIC`]), not `Proof::to_bytes`.
-/// Converting this into [`plonky2::plonk::proof::ProofWithPublicInputs`] requires matching FRI and
-/// transcript wiring on the C++ side and is not implemented here.
+/// To build a Plonky2 [`plonky2::plonk::proof::ProofWithPublicInputs`] for
+/// [`plonky2::plonk::verifier::verify`], use [`super::proof_with_public_inputs_from_zkxn_blob`]
+/// together with a transcript-consistent [`plonky2::fri::proof::FriProof`] (typically from the CPU
+/// prover). That path succeeds only when GPU opening layout matches Plonky2’s [`plonky2::plonk::proof::OpeningSet`] shape
+/// (see [`super::zkxn_opening_limbs_for_gpu_prover_config`] vs
+/// [`super::zkxn_opening_limbs_for_plonky2_common`]) and the native quotient matches Plonky2.
 ///
 /// `constants_sigmas_coeffs_gpu` must be a device pointer to coefficient-domain polynomials in the
 /// same layout as [`plonky2::fri::oracle::PolynomialBatch`] / native `PolynomialBatchGPU::from_coeffs`

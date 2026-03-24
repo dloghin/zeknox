@@ -25,6 +25,7 @@ mod fibonacci {
 
     use plonky2::field::goldilocks_field::GoldilocksField;
     use plonky2::field::types::{Field, PrimeField64};
+    use plonky2::hash::poseidon::PoseidonHash;
     use plonky2::iop::generator::generate_partial_witness;
     use plonky2::iop::witness::{PartialWitness, Witness, WitnessWrite};
     use plonky2::plonk::circuit_builder::CircuitBuilder;
@@ -37,7 +38,9 @@ mod fibonacci {
     use rustacuda::quick_init;
 
     use zeknox::{
-        get_number_of_gpus_rs, gpu_prove_safe, init_cuda_degree_rs, init_cuda_rs, GPU_PROOF_MAGIC,
+        get_number_of_gpus_rs, gpu_prove_safe, init_cuda_degree_rs, init_cuda_rs,
+        parse_zkxn_gpu_blob, proof_with_public_inputs_from_zkxn_blob,
+        verified_proof_matching_zkxn_blob, ProverConfig, ZkxnBlobError, GPU_PROOF_MAGIC,
     };
 
     /// Same iteration count as `plonky2/plonky2/examples/fibonacci.rs` (100th Fibonacci element).
@@ -98,11 +101,15 @@ mod fibonacci {
 
     /// End-to-end Fibonacci (example circuit) with Zeknox `gpu_prove` and Plonky2 verification.
     ///
-    /// The native GPU orchestrator returns a **custom proof blob** (Merkle caps + openings) and does
-    /// not yet emit a full Plonky2 [`plonky2::plonk::proof::Proof`] (no FRI in the blob). Therefore
-    /// [`verify`] cannot consume the GPU bytes directly. This test:
-    /// 1. Runs Plonky2 [`prove`] + [`verify`] for the Fibonacci-style circuit (statement correctness).
-    /// 2. Runs [`gpu_prove_safe`] on the **same** witness and checks the blob header (GPU path).
+    /// The native blob encodes Merkle caps and a flat opening set (see [`zeknox::parse_zkxn_gpu_blob`])
+    /// but not FRI. We assemble a [`plonky2::plonk::proof::ProofWithPublicInputs`] on the CPU by
+    /// pairing the blob with the CPU prover’s [`FriProof`]. Full agreement (and thus
+    /// [`verify`] on blob-derived data alone) requires the GPU quotient pipeline to match Plonky2;
+    /// until then [`verified_proof_matching_zkxn_blob`] reports a structured mismatch. This test:
+    /// 1. Runs Plonky2 [`prove`] + [`verify`] (statement correctness on the CPU path).
+    /// 2. Runs [`gpu_prove_safe`], parses the blob, and asserts [`proof_with_public_inputs_from_zkxn_blob`]
+    ///    returns [`ZkxnBlobError::BlobIncompatiblePlonky2`] until GPU Z/partial layout matches Plonky2.
+    /// 3. Calls [`verified_proof_matching_zkxn_blob`] and expects a quotient cap mismatch (zero GPU quotient).
     #[test]
     fn fibonacci_gpu_blob_and_plonky2_verify() {
         type C = PoseidonGoldilocksConfig;
@@ -115,10 +122,10 @@ mod fibonacci {
         let (data, pw) = build_fibonacci_circuit::<C>();
 
         let mut timing = TimingTree::default();
-        let proof =
+        let cpu_proof =
             prove(&data.prover_only, &data.common, pw.clone(), &mut timing).expect("cpu prove");
-        let public_inputs_ref = proof.public_inputs.clone();
-        verify(proof, &data.verifier_only, &data.common).expect("plonky2 verify");
+        let public_inputs_ref = cpu_proof.public_inputs.clone();
+        verify(cpu_proof.clone(), &data.verifier_only, &data.common).expect("plonky2 verify");
 
         // `init_cuda_degree` is a *log-domain* bound (see `native/lib.cu`: loops `k = 2..max_degree`).
         init_cuda_rs();
@@ -128,7 +135,7 @@ mod fibonacci {
         let partition = generate_partial_witness(pw, &data.prover_only, &data.common);
         let public_inputs = partition.get_targets(&data.prover_only.public_inputs);
         assert_eq!(public_inputs, public_inputs_ref);
-        let witness = partition.full_witness();
+        let witness = partition.clone().full_witness();
 
         let flat = flatten_constants_sigmas_coeffs(&data.prover_only.constants_sigmas_commitment);
         let _rusta = quick_init().expect("CUDA context for coeff upload");
@@ -149,5 +156,56 @@ mod fibonacci {
             u32::from_le_bytes(blob[0..4].try_into().unwrap()),
             GPU_PROOF_MAGIC
         );
+
+        let prover_config = ProverConfig {
+            degree_bits: data.common.degree_bits() as u32,
+            num_wires: data.common.config.num_wires as u32,
+            num_routed_wires: data.common.config.num_routed_wires as u32,
+            num_challenges: data.common.config.num_challenges as u32,
+            num_partial_products: data.common.num_partial_products as u32,
+            quotient_degree_factor: data.common.quotient_degree_factor as u32,
+            rate_bits: data.common.config.fri_config.rate_bits as u32,
+            cap_height: data.common.config.fri_config.cap_height as u32,
+            num_gate_constraints: data.common.num_gate_constraints as u32,
+            num_constants: data.common.num_constants as u32,
+            num_public_inputs: data.common.num_public_inputs as u32,
+        };
+
+        parse_zkxn_gpu_blob::<PoseidonHash>(&blob).expect("parse zkxn blob");
+
+        match proof_with_public_inputs_from_zkxn_blob::<C>(
+            &data.common,
+            &prover_config,
+            &blob,
+            cpu_proof.proof.opening_proof.clone(),
+            cpu_proof.public_inputs.clone(),
+        ) {
+            Err(ZkxnBlobError::BlobIncompatiblePlonky2 { .. }) => {}
+            Ok(_) => {
+                panic!("expected opening layout mismatch until GPU matches Plonky2 OpeningSet")
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+
+        match verified_proof_matching_zkxn_blob::<C>(
+            &data.prover_only,
+            &data.common,
+            partition,
+            &blob,
+            &mut TimingTree::default(),
+        ) {
+            Ok(pwp) => {
+                verify(pwp, &data.verifier_only, &data.common).expect("verify blob-matched proof");
+            }
+            Err(ZkxnBlobError::BlobIncompatiblePlonky2 { .. }) => {}
+            Err(ZkxnBlobError::CpuBlobMismatch { detail }) => {
+                assert!(
+                    detail.contains("quotient"),
+                    "expected quotient mismatch with zero GPU quotients, got: {}",
+                    detail
+                );
+            }
+            Err(e) => panic!("unexpected Zkxn error: {e}"),
+        }
     }
 }
