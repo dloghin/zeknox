@@ -1335,7 +1335,7 @@ TEST(LibCMakeIntegration, lib_header_includes_gpu_prove_symbol)
 TEST(LibCMakeIntegration, prover_ffi_struct_layout_matches_rust)
 {
     EXPECT_EQ(sizeof(ProverConfig), static_cast<size_t>(44));
-    EXPECT_EQ(sizeof(GateInfo), static_cast<size_t>(24));
+    EXPECT_EQ(sizeof(GateInfo), static_cast<size_t>(56));
 }
 
 /** GateType enum values must match Rust `gate_type_id` mapping in `wrappers/rust/src/prover/plonky2.rs`. */

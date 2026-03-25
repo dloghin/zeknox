@@ -15,7 +15,7 @@ mod ffi_layout {
 
     #[test]
     fn gate_info_matches_native_layout() {
-        assert_eq!(std::mem::size_of::<GateInfo>(), 6 * 4);
+        assert_eq!(std::mem::size_of::<GateInfo>(), 14 * 4);
     }
 }
 

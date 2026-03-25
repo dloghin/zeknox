@@ -42,6 +42,18 @@ pub fn gate_type_id<F: RichField + Extendable<D>, const D: usize>(gate: &GateRef
 pub fn plonky2_gate_infos<F: RichField + Extendable<D>, const D: usize>(
     common: &CommonCircuitData<F, D>,
 ) -> Vec<GateInfo> {
+    fn parse_named_u32(id: &str, key: &str) -> Option<u32> {
+        let needle = format!("{key}: ");
+        let idx = id.find(&needle)?;
+        let tail = &id[idx + needle.len()..];
+        let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            None
+        } else {
+            digits.parse::<u32>().ok()
+        }
+    }
+
     let num_sel = common.selectors_info.num_selectors() as u32;
     common
         .gates
@@ -60,13 +72,40 @@ pub fn plonky2_gate_infos<F: RichField + Extendable<D>, const D: usize>(
                 .get(i)
                 .map(|r| (r.start as u32, r.end as u32))
                 .unwrap_or((0, 0));
+            let gid = g.0.id();
+            let gty = gate_type_id(g);
+
+            // Optional per-gate wiring metadata. Values are interpreted by native kernels.
+            let (wire_0, wire_1, wire_2, wire_3, const_0, const_1, aux_0, aux_1) = match gty {
+                // ArithmeticGate uses 4 wires per op and 2 constants.
+                0 => {
+                    let nops = parse_named_u32(&gid, "num_ops").unwrap_or(0);
+                    (0, 1, 2, 3, 0, 1, nops, 0)
+                }
+                // ConstantGate aligns wire i with local constant i.
+                2 => {
+                    let nconst = parse_named_u32(&gid, "num_consts").unwrap_or(0);
+                    (0, 0, 0, 0, 0, 0, nconst, 0)
+                }
+                // PublicInputGate constrains wires [0..4) to public-input hash limbs.
+                3 => (0, 1, 2, 3, 0, 0, 4, 0),
+                _ => (0, 0, 0, 0, 0, 0, 0, 0),
+            };
             GateInfo {
-                gate_type: gate_type_id(g),
+                gate_type: gty,
                 selector_index: sel,
                 group_start: gs,
                 group_end: ge,
                 num_selectors: num_sel,
                 num_constraints: g.0.num_constraints() as u32,
+                wire_0,
+                wire_1,
+                wire_2,
+                wire_3,
+                const_0,
+                const_1,
+                aux_0,
+                aux_1,
             }
         })
         .collect()

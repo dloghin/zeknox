@@ -57,4 +57,24 @@ EXTERN RustError compute_naive_transpose_rev(size_t device_id, void *output, voi
 #include <prover/prover.h>
 #pragma pop_macro("EXTERN")
 
+EXTERN RustError zeknox_compute_quotient_polys_gl64(
+    size_t gpu_id,
+    void *cuda_stream,
+    const uint64_t *d_constants_sigmas_lde,
+    uint64_t constants_sigmas_leaf_size,
+    const uint64_t *d_wires_lde,
+    uint64_t wires_leaf_size,
+    const uint64_t *d_zs_partial_products_lde,
+    uint64_t zs_partial_leaf_size,
+    const ProverConfig *config,
+    const GateInfo *gates,
+    uint32_t num_gates,
+    const uint64_t *h_k_is,
+    const uint64_t *h_public_inputs_hash,
+    const uint64_t *h_betas,
+    const uint64_t *h_gammas,
+    const uint64_t *h_alphas,
+    uint64_t *d_out_quotient_coeffs,
+    size_t *out_lde_q_size);
+
 #endif // __ZEKNOX_CUDA_LIB_H__

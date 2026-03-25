@@ -45,6 +45,14 @@ pub struct GateInfo {
     pub group_end: u32,
     pub num_selectors: u32,
     pub num_constraints: u32,
+    pub wire_0: u32,
+    pub wire_1: u32,
+    pub wire_2: u32,
+    pub wire_3: u32,
+    pub const_0: u32,
+    pub const_1: u32,
+    pub aux_0: u32,
+    pub aux_1: u32,
 }
 
 extern "C" {
@@ -192,8 +200,11 @@ mod plonky2;
 #[cfg(feature = "plonky2")]
 mod zkxn_blob;
 
+mod quotient_polys;
+
 #[cfg(feature = "plonky2")]
 pub use plonky2::{gate_type_id, gpu_prove_safe, plonky2_gate_infos};
+pub use quotient_polys::compute_quotient_polys_device_gl64;
 
 #[cfg(feature = "plonky2")]
 pub use zkxn_blob::{

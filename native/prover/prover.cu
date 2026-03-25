@@ -22,6 +22,9 @@
 #include <prover/partial_products.cuh>
 #include <prover/polynomial_batch.cuh>
 #include <prover/prover.h>
+#include <prover/gate_constraints.cuh>
+#include <prover/quotient_compute_polys.cuh>
+#include <prover/quotient_poly.cuh>
 #include <utils/all_gpus.hpp>
 #include <utils/exception.cuh>
 #include <utils/gpu_t.cuh>
@@ -204,8 +207,6 @@ RustError gpu_prove(
     (void)constants_sigmas_lde_gpu;
     (void)constants_sigmas_digests_gpu;
     (void)constants_sigmas_cap_gpu;
-    (void)gates;
-    (void)num_gates;
     (void)reduction_arity_bits;
     (void)fft_root_table;
 
@@ -244,7 +245,8 @@ RustError gpu_prove(
     const size_t num_chunks = partial_products_num_chunks(config->num_routed_wires, config->quotient_degree_factor);
     const size_t num_zp_polys = 1u + num_chunks;
     const uint32_t qfac = std::max(1u, config->quotient_degree_factor);
-    const size_t num_q_polys = (size_t)qfac;
+    // Plonky2 expects `num_challenges * quotient_degree_factor` quotient chunks.
+    const size_t num_q_polys = (size_t)config->num_challenges * (size_t)qfac;
 
     try {
         init_ntt_for_prove(config->degree_bits + config->rate_bits + 4u, gpu_id);
@@ -401,9 +403,6 @@ RustError gpu_prove(
             challenger.observe_cap(cap_host.data(), cap_host.size());
         }
 
-        /* Alpha challenges for quotient mixing (Plonky2 transcript); quotient kernel not wired yet. */
-        (void)challenger.get_n_challenges(config->num_challenges);
-
         PolynomialBatchGPU cs_batch = PolynomialBatchGPU::from_coeffs(
             static_cast<fr_t *>(const_cast<void *>(constants_sigmas_coeffs_gpu)),
             num_const_sigma,
@@ -413,10 +412,190 @@ RustError gpu_prove(
             config->cap_height,
             (size_t)gpu_id);
 
+        /* Alpha challenges for quotient mixing (Plonky2 transcript). */
+        std::vector<gl64_t> alphas = challenger.get_n_challenges(config->num_challenges);
+
+        unique_u64 d_qvals(nullptr, cuda_u64_deleter{stream});
+        bool have_qvals = false;
+        bool quotient_ifft_done = false;
+        size_t lde_q_stride = 0;
+
+        const bool use_plonky2_quotient =
+            config->num_challenges == 1u && config->quotient_degree_factor >= 2u &&
+            num_zp_polys == 1u + num_chunks &&
+            (config->num_gate_constraints == 0u || num_gates > 0u);
+
+        if (use_plonky2_quotient) {
+            std::vector<uint64_t> betas_u64(1, beta.get_val());
+            std::vector<uint64_t> gammas_u64(1, gamma.get_val());
+            std::vector<uint64_t> alphas_u64(1, alphas[0].get_val());
+            std::vector<uint64_t> k_is_host((size_t)config->num_routed_wires);
+            memcpy(k_is_host.data(), k_is, k_is_host.size() * sizeof(uint64_t));
+
+            uint32_t q_bits = config->quotient_degree_factor <= 1u
+                                  ? 0u
+                                  : (32u - (uint32_t)__builtin_clz(config->quotient_degree_factor - 1u));
+            size_t lde_q_est = (size_t)1u << ((size_t)config->degree_bits + (size_t)q_bits);
+            uint64_t *d_qfull = nullptr;
+            CUDA_OK(cudaMalloc(
+                &d_qfull, (size_t)config->num_challenges * lde_q_est * sizeof(uint64_t)));
+
+            RustError qerr = compute_quotient_polys_from_batches_gl64(
+                (size_t)gpu_id,
+                stream,
+                cs_batch,
+                wires_batch,
+                zp_batch,
+                config,
+                gates,
+                num_gates,
+                k_is_host.data(),
+                reinterpret_cast<const uint64_t *>(pub_in),
+                betas_u64.data(),
+                gammas_u64.data(),
+                alphas_u64.data(),
+                reinterpret_cast<fr_t *>(d_qfull),
+                &lde_q_stride);
+            if (qerr.code != 0) {
+                cudaFree(d_qfull);
+                return qerr;
+            }
+            d_qvals = unique_u64(d_qfull, cuda_u64_deleter{stream});
+            have_qvals = true;
+            quotient_ifft_done = true;
+        } else if (config->num_gate_constraints > 0 && num_gates > 0) {
+            const size_t lde_log = (size_t)config->degree_bits + (size_t)config->rate_bits;
+            const size_t lde_size = (size_t)1u << lde_log;
+            const size_t n_gc = (size_t)config->num_gate_constraints;
+
+            uint64_t *d_gc_raw = nullptr;
+            uint64_t *d_alpha_raw = nullptr;
+            uint64_t *d_zh_inv_raw = nullptr;
+            uint64_t *d_qvals_raw = nullptr;
+            CUDA_OK(cudaMalloc(&d_gc_raw, n_gc * lde_size * sizeof(uint64_t)));
+            CUDA_OK(cudaMalloc(&d_alpha_raw, std::max((size_t)1, n_gc) * sizeof(uint64_t)));
+            CUDA_OK(cudaMalloc(&d_zh_inv_raw, lde_size * sizeof(uint64_t)));
+            CUDA_OK(cudaMalloc(&d_qvals_raw, (size_t)config->num_challenges * lde_size * sizeof(uint64_t)));
+            unique_u64 d_gc(d_gc_raw, cuda_u64_deleter{stream});
+            unique_u64 d_alpha(d_alpha_raw, cuda_u64_deleter{stream});
+            unique_u64 d_zh_inv(d_zh_inv_raw, cuda_u64_deleter{stream});
+            d_qvals = unique_u64(d_qvals_raw, cuda_u64_deleter{stream});
+            CUDA_OK(cudaMemset(d_gc.get(), 0, n_gc * lde_size * sizeof(uint64_t)));
+
+            std::vector<uint64_t> alpha_host(std::max((size_t)1, n_gc), gl64_t::one().get_val());
+            for (size_t i = 0; i < n_gc; i++) {
+                alpha_host[i] = alphas[i % std::max((size_t)1, alphas.size())].get_val();
+            }
+            CUDA_OK(cudaMemcpy(
+                d_alpha.get(),
+                alpha_host.data(),
+                alpha_host.size() * sizeof(uint64_t),
+                cudaMemcpyHostToDevice));
+
+            size_t row = 0;
+            for (size_t gi = 0; gi < (size_t)num_gates && row < n_gc; ++gi) {
+                const GateInfo &g = gates[gi];
+                if (g.gate_type == (uint32_t)GateType::ArithmeticGate) {
+                    const uint32_t nops = std::max(1u, g.aux_0);
+                    for (uint32_t op = 0; op < nops && row < n_gc; ++op, ++row) {
+                        launch_eval_arithmetic_gate_constraints(
+                            reinterpret_cast<const uint64_t *>(cs_batch.lde_gpu),
+                            reinterpret_cast<const uint64_t *>(wires_batch.lde_gpu),
+                            lde_size,
+                            (size_t)config->num_constants,
+                            (size_t)config->num_wires,
+                            g.wire_0 + 4u * op,
+                            g.wire_1 + 4u * op,
+                            g.wire_2 + 4u * op,
+                            g.wire_3 + 4u * op,
+                            g.const_0,
+                            g.const_1,
+                            row,
+                            d_gc.get(),
+                            n_gc,
+                            stream);
+                    }
+                } else if (g.gate_type == (uint32_t)GateType::ConstantGate) {
+                    const uint32_t nconst = std::max(1u, g.aux_0);
+                    for (uint32_t j = 0; j < nconst && row < n_gc; ++j, ++row) {
+                        launch_eval_constant_gate_constraints(
+                            reinterpret_cast<const uint64_t *>(cs_batch.lde_gpu),
+                            reinterpret_cast<const uint64_t *>(wires_batch.lde_gpu),
+                            lde_size,
+                            (size_t)config->num_constants,
+                            (size_t)config->num_wires,
+                            g.wire_0 + j,
+                            g.const_0 + j,
+                            row,
+                            d_gc.get(),
+                            n_gc,
+                            stream);
+                    }
+                }
+            }
+
+            launch_precompute_z_h_inverse(
+                (uint64_t)GROUP_GENERATOR,
+                (uint64_t)OMEGA[lde_log],
+                config->degree_bits,
+                d_zh_inv.get(),
+                lde_size,
+                stream);
+
+            launch_eval_vanishing_poly(
+                d_gc.get(),
+                n_gc,
+                lde_size,
+                d_alpha.get(),
+                n_gc,
+                nullptr,
+                0,
+                d_zh_inv.get(),
+                d_qvals.get(),
+                config->num_challenges,
+                stream);
+            CUDA_OK(cudaStreamSynchronize(stream));
+            have_qvals = true;
+            lde_q_stride = lde_size;
+        }
+
         fr_t *d_qc = nullptr;
         CUDA_OK(cudaMalloc(&d_qc, num_q_polys * degree * sizeof(fr_t)));
         unique_fr d_q_coeffs(d_qc, cuda_fr_deleter{stream});
         CUDA_OK(cudaMemset(d_q_coeffs.get(), 0, num_q_polys * degree * sizeof(fr_t)));
+        if (have_qvals) {
+            if (!quotient_ifft_done) {
+                const size_t lde_log = (size_t)config->degree_bits + (size_t)config->rate_bits;
+                NTT_Config inv_cfg = {};
+                inv_cfg.batches = config->num_challenges;
+                inv_cfg.order = NN;
+                inv_cfg.ntt_type = standard;
+                inv_cfg.extension_rate_bits = 0;
+                inv_cfg.are_inputs_on_device = true;
+                inv_cfg.are_outputs_on_device = true;
+                inv_cfg.with_coset = true;
+                inv_cfg.is_multi_gpu = false;
+                inv_cfg.salt_size = 0;
+                RustError ierr = ntt::batch_ntt(
+                    gpu, reinterpret_cast<fr_t *>(d_qvals.get()), (uint32_t)lde_log, inverse, inv_cfg);
+                if (ierr.code != 0) {
+                    return RustError{ierr.code, ierr.message ? ierr.message : "quotient inverse NTT failed"};
+                }
+            }
+
+            const size_t per_ch = (size_t)qfac * degree;
+            for (size_t ch = 0; ch < (size_t)config->num_challenges; ch++) {
+                const fr_t *src = reinterpret_cast<fr_t *>(d_qvals.get()) + ch * lde_q_stride;
+                fr_t *dst = d_q_coeffs.get() + ch * per_ch;
+                CUDA_OK(cudaMemcpyAsync(
+                    dst,
+                    src,
+                    per_ch * sizeof(fr_t),
+                    cudaMemcpyDeviceToDevice,
+                    stream));
+            }
+            CUDA_OK(cudaStreamSynchronize(stream));
+        }
 
         PolynomialBatchGPU q_batch = PolynomialBatchGPU::from_coeffs(
             d_q_coeffs.get(),

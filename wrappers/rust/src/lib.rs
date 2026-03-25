@@ -16,9 +16,9 @@ use crate::types::{NTTConfig, TransposeConfig};
 
 #[cfg(feature = "cuda")]
 pub use prover::{
-    gpu_prove, gpu_prove_blob, GateInfo, GpuProveBlobArgs, ProverConfig,
-    DEFAULT_GPU_PROOF_BUFFER_BYTES, GPU_PROOF_MAGIC, GPU_PROVE_ERR_PROOF_BUFFER_TOO_SMALL,
-    NUM_HASH_OUT_ELTS,
+    compute_quotient_polys_device_gl64, gpu_prove, gpu_prove_blob, GateInfo, GpuProveBlobArgs,
+    ProverConfig, DEFAULT_GPU_PROOF_BUFFER_BYTES, GPU_PROOF_MAGIC,
+    GPU_PROVE_ERR_PROOF_BUFFER_TOO_SMALL, NUM_HASH_OUT_ELTS,
 };
 
 #[cfg(all(feature = "cuda", feature = "plonky2"))]
