@@ -207,8 +207,6 @@ RustError gpu_prove(
     (void)constants_sigmas_lde_gpu;
     (void)constants_sigmas_digests_gpu;
     (void)constants_sigmas_cap_gpu;
-    (void)gates;
-    (void)num_gates;
     (void)reduction_arity_bits;
     (void)fft_root_table;
 

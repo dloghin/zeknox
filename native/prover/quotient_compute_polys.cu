@@ -154,6 +154,7 @@ __global__ void quotient_vanishing_reduce_kernel(
     uint32_t num_gate_constraints,
     uint32_t quotient_degree_bits,
     uint64_t omega_quotient_u64,
+    uint64_t coset_shift_u64,
     const uint64_t *d_const_pt,
     const uint64_t *d_wires_pt,
     const uint64_t *d_sigma_pt,
@@ -179,16 +180,15 @@ __global__ void quotient_vanishing_reduce_kernel(
     }
 
     gl64_t omega = gl64_t(omega_quotient_u64);
-    gl64_t x = d_gl64_pow_u64(omega, (uint64_t)pt);
+    gl64_t g = gl64_t(coset_shift_u64);
+    gl64_t x = g * d_gl64_pow_u64(omega, (uint64_t)pt);
     gl64_t n_field = gl64_t(n_trace_u64);
 
     uint32_t period = 1u << quotient_degree_bits;
     size_t pid = pt & (size_t)(period - 1u);
     gl64_t zh_tab = gl64_t(d_zh_eval_period[pid]);
     gl64_t l_0;
-    if ((uint64_t)x == 1ULL) {
-        l_0 = gl64_t::one();
-    } else {
+    {
         gl64_t den = n_field * (x - gl64_t::one());
         l_0 = zh_tab / den;
     }
@@ -403,6 +403,24 @@ RustError compute_quotient_polys_lde_pointers_gl64(
     uint64_t *d_alpha = nullptr;
     uint64_t *d_qvals = nullptr;
 
+    auto free_all = [&]() {
+        cudaFree(d_zh_eval);
+        cudaFree(d_zh_inv_p);
+        cudaFree(d_const);
+        cudaFree(d_sigma);
+        cudaFree(d_w);
+        cudaFree(d_zp);
+        cudaFree(d_zn);
+        cudaFree(d_gate);
+        cudaFree(d_k);
+        cudaFree(d_beta);
+        cudaFree(d_gamma);
+        cudaFree(d_alpha);
+        cudaFree(d_qvals);
+    };
+
+    try {
+
     CUDA_OK(cudaMalloc(&d_zh_eval, zh_eval_host.size() * sizeof(uint64_t)));
     CUDA_OK(cudaMalloc(&d_zh_inv_p, zh_inv_host.size() * sizeof(uint64_t)));
     CUDA_OK(cudaMemcpyAsync(d_zh_eval, zh_eval_host.data(), zh_eval_host.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
@@ -498,19 +516,7 @@ RustError compute_quotient_polys_lde_pointers_gl64(
 
     uint32_t lde_q_log = deg_log + q_bits;
     if (lde_q_log >= sizeof(OMEGA) / sizeof(OMEGA[0])) {
-        cudaFree(d_zh_eval);
-        cudaFree(d_zh_inv_p);
-        cudaFree(d_const);
-        cudaFree(d_sigma);
-        cudaFree(d_w);
-        cudaFree(d_zp);
-        cudaFree(d_zn);
-        cudaFree(d_gate);
-        cudaFree(d_k);
-        cudaFree(d_beta);
-        cudaFree(d_gamma);
-        cudaFree(d_alpha);
-        cudaFree(d_qvals);
+        free_all();
         return RustError{EINVAL, "compute_quotient_polys: quotient LDE log too large"};
     }
 
@@ -527,6 +533,7 @@ RustError compute_quotient_polys_lde_pointers_gl64(
         config->num_gate_constraints,
         q_bits,
         OMEGA[lde_q_log],
+        GROUP_GENERATOR,
         d_const,
         d_w,
         d_sigma,
@@ -557,19 +564,7 @@ RustError compute_quotient_polys_lde_pointers_gl64(
     RustError ierr =
         ntt::batch_ntt(gpu, reinterpret_cast<fr_t *>(d_qvals), (uint32_t)lde_q_log, inverse, inv_cfg);
     if (ierr.code != 0) {
-        cudaFree(d_zh_eval);
-        cudaFree(d_zh_inv_p);
-        cudaFree(d_const);
-        cudaFree(d_sigma);
-        cudaFree(d_w);
-        cudaFree(d_zp);
-        cudaFree(d_zn);
-        cudaFree(d_gate);
-        cudaFree(d_k);
-        cudaFree(d_beta);
-        cudaFree(d_gamma);
-        cudaFree(d_alpha);
-        cudaFree(d_qvals);
+        free_all();
         return ierr;
     }
 
@@ -581,20 +576,12 @@ RustError compute_quotient_polys_lde_pointers_gl64(
         stream));
     CUDA_OK(cudaStreamSynchronize(stream));
 
-    cudaFree(d_zh_eval);
-    cudaFree(d_zh_inv_p);
-    cudaFree(d_const);
-    cudaFree(d_sigma);
-    cudaFree(d_w);
-    cudaFree(d_zp);
-    cudaFree(d_zn);
-    cudaFree(d_gate);
-    cudaFree(d_k);
-    cudaFree(d_beta);
-    cudaFree(d_gamma);
-    cudaFree(d_alpha);
-    cudaFree(d_qvals);
+    } catch (...) {
+        free_all();
+        throw;
+    }
 
+    free_all();
     return RustError{0};
 }
 
