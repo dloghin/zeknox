@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -26,6 +27,17 @@
 using fr_t = gl64_t;
 
 namespace {
+
+struct cuda_u64_deleter {
+    void operator()(uint64_t *p) const noexcept
+    {
+        if (p) {
+            (void)cudaFree((void *)p);
+        }
+    }
+};
+
+using unique_u64 = std::unique_ptr<uint64_t, cuda_u64_deleter>;
 
 __device__ inline size_t d_rev_bits(size_t val, size_t bit_count)
 {
@@ -389,59 +401,61 @@ RustError compute_quotient_polys_lde_pointers_gl64(
     std::vector<uint64_t> zh_inv_host;
     build_zero_poly_on_coset_tables(deg_log, q_bits, &zh_eval_host, &zh_inv_host);
 
-    uint64_t *d_zh_eval = nullptr;
-    uint64_t *d_zh_inv_p = nullptr;
-    uint64_t *d_const = nullptr;
-    uint64_t *d_sigma = nullptr;
-    uint64_t *d_w = nullptr;
-    uint64_t *d_zp = nullptr;
-    uint64_t *d_zn = nullptr;
-    uint64_t *d_gate = nullptr;
-    uint64_t *d_k = nullptr;
-    uint64_t *d_beta = nullptr;
-    uint64_t *d_gamma = nullptr;
-    uint64_t *d_alpha = nullptr;
-    uint64_t *d_qvals = nullptr;
+    unique_u64 d_zh_eval(nullptr);
+    unique_u64 d_zh_inv_p(nullptr);
+    unique_u64 d_const(nullptr);
+    unique_u64 d_sigma(nullptr);
+    unique_u64 d_w(nullptr);
+    unique_u64 d_zp(nullptr);
+    unique_u64 d_zn(nullptr);
+    unique_u64 d_gate(nullptr);
+    unique_u64 d_k(nullptr);
+    unique_u64 d_beta(nullptr);
+    unique_u64 d_gamma(nullptr);
+    unique_u64 d_alpha(nullptr);
+    unique_u64 d_qvals(nullptr);
 
-    auto free_all = [&]() {
-        cudaFree(d_zh_eval);
-        cudaFree(d_zh_inv_p);
-        cudaFree(d_const);
-        cudaFree(d_sigma);
-        cudaFree(d_w);
-        cudaFree(d_zp);
-        cudaFree(d_zn);
-        cudaFree(d_gate);
-        cudaFree(d_k);
-        cudaFree(d_beta);
-        cudaFree(d_gamma);
-        cudaFree(d_alpha);
-        cudaFree(d_qvals);
+    auto alloc_u64 = [](size_t count) -> unique_u64 {
+        uint64_t *ptr = nullptr;
+        CUDA_OK(cudaMalloc(&ptr, count * sizeof(uint64_t)));
+        return unique_u64(ptr);
     };
 
-    try {
+    d_zh_eval = alloc_u64(zh_eval_host.size());
+    d_zh_inv_p = alloc_u64(zh_inv_host.size());
+    CUDA_OK(cudaMemcpyAsync(
+        d_zh_eval.get(),
+        zh_eval_host.data(),
+        zh_eval_host.size() * sizeof(uint64_t),
+        cudaMemcpyHostToDevice,
+        stream));
+    CUDA_OK(cudaMemcpyAsync(
+        d_zh_inv_p.get(),
+        zh_inv_host.data(),
+        zh_inv_host.size() * sizeof(uint64_t),
+        cudaMemcpyHostToDevice,
+        stream));
 
-    CUDA_OK(cudaMalloc(&d_zh_eval, zh_eval_host.size() * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_zh_inv_p, zh_inv_host.size() * sizeof(uint64_t)));
-    CUDA_OK(cudaMemcpyAsync(d_zh_eval, zh_eval_host.data(), zh_eval_host.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-    CUDA_OK(cudaMemcpyAsync(d_zh_inv_p, zh_inv_host.data(), zh_inv_host.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+    d_const = alloc_u64(lde_q * (size_t)num_constants);
+    d_sigma = alloc_u64(lde_q * (size_t)num_routed);
+    d_w = alloc_u64(lde_q * (size_t)num_wires);
+    d_zp = alloc_u64(lde_q * (size_t)zp_np);
+    d_zn = alloc_u64(lde_q * (size_t)nc);
+    d_gate = alloc_u64((size_t)config->num_gate_constraints * lde_q);
+    d_k = alloc_u64((size_t)num_routed);
+    d_beta = alloc_u64((size_t)nc);
+    d_gamma = alloc_u64((size_t)nc);
+    d_alpha = alloc_u64((size_t)nc);
+    d_qvals = alloc_u64((size_t)nc * lde_q);
 
-    CUDA_OK(cudaMalloc(&d_const, lde_q * (size_t)num_constants * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_sigma, lde_q * (size_t)num_routed * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_w, lde_q * (size_t)num_wires * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_zp, lde_q * (size_t)zp_np * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_zn, lde_q * (size_t)nc * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_gate, (size_t)config->num_gate_constraints * lde_q * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_k, (size_t)num_routed * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_beta, (size_t)nc * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_gamma, (size_t)nc * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_alpha, (size_t)nc * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc(&d_qvals, (size_t)nc * lde_q * sizeof(uint64_t)));
-
-    CUDA_OK(cudaMemcpyAsync(d_k, h_k_is, (size_t)num_routed * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-    CUDA_OK(cudaMemcpyAsync(d_beta, h_betas, (size_t)nc * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-    CUDA_OK(cudaMemcpyAsync(d_gamma, h_gammas, (size_t)nc * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-    CUDA_OK(cudaMemcpyAsync(d_alpha, h_alphas, (size_t)nc * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+    CUDA_OK(
+        cudaMemcpyAsync(d_k.get(), h_k_is, (size_t)num_routed * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+    CUDA_OK(
+        cudaMemcpyAsync(d_beta.get(), h_betas, (size_t)nc * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+    CUDA_OK(
+        cudaMemcpyAsync(d_gamma.get(), h_gammas, (size_t)nc * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+    CUDA_OK(
+        cudaMemcpyAsync(d_alpha.get(), h_alphas, (size_t)nc * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
 
     int gather_threads = 256;
     int gather_blocks = (int)((lde_q + (size_t)gather_threads - 1) / (size_t)gather_threads);
@@ -462,14 +476,15 @@ RustError compute_quotient_polys_lde_pointers_gl64(
         num_wires,
         zp_np,
         nc,
-        d_const,
-        d_sigma,
-        d_w,
-        d_zp,
-        d_zn);
+        d_const.get(),
+        d_sigma.get(),
+        d_w.get(),
+        d_zp.get(),
+        d_zn.get());
     CUDA_OK(cudaGetLastError());
 
-    CUDA_OK(cudaMemsetAsync(d_gate, 0, (size_t)config->num_gate_constraints * lde_q * sizeof(uint64_t), stream));
+    CUDA_OK(cudaMemsetAsync(
+        d_gate.get(), 0, (size_t)config->num_gate_constraints * lde_q * sizeof(uint64_t), stream));
 
     size_t n_gc = (size_t)config->num_gate_constraints;
     size_t row = 0;
@@ -479,8 +494,8 @@ RustError compute_quotient_polys_lde_pointers_gl64(
             uint32_t nops = g.aux_0 > 0 ? g.aux_0 : 1u;
             for (uint32_t op = 0; op < nops && row < n_gc; ++op, ++row) {
                 launch_eval_arithmetic_gate_constraints(
-                    d_const,
-                    d_w,
+                    d_const.get(),
+                    d_w.get(),
                     lde_q,
                     (size_t)num_constants,
                     (size_t)num_wires,
@@ -491,7 +506,7 @@ RustError compute_quotient_polys_lde_pointers_gl64(
                     g.const_0,
                     g.const_1,
                     row,
-                    d_gate,
+                    d_gate.get(),
                     n_gc,
                     stream);
             }
@@ -499,15 +514,15 @@ RustError compute_quotient_polys_lde_pointers_gl64(
             uint32_t nconst = g.aux_0 > 0 ? g.aux_0 : 1u;
             for (uint32_t j = 0; j < nconst && row < n_gc; ++j, ++row) {
                 launch_eval_constant_gate_constraints(
-                    d_const,
-                    d_w,
+                    d_const.get(),
+                    d_w.get(),
                     lde_q,
                     (size_t)num_constants,
                     (size_t)num_wires,
                     g.wire_0 + j,
                     g.const_0 + j,
                     row,
-                    d_gate,
+                    d_gate.get(),
                     n_gc,
                     stream);
             }
@@ -516,7 +531,6 @@ RustError compute_quotient_polys_lde_pointers_gl64(
 
     uint32_t lde_q_log = deg_log + q_bits;
     if (lde_q_log >= sizeof(OMEGA) / sizeof(OMEGA[0])) {
-        free_all();
         return RustError{EINVAL, "compute_quotient_polys: quotient LDE log too large"};
     }
 
@@ -534,20 +548,20 @@ RustError compute_quotient_polys_lde_pointers_gl64(
         q_bits,
         OMEGA[lde_q_log],
         GROUP_GENERATOR,
-        d_const,
-        d_w,
-        d_sigma,
-        d_zp,
-        d_zn,
-        d_gate,
-        d_k,
-        d_beta,
-        d_gamma,
-        d_alpha,
-        d_zh_inv_p,
-        d_zh_eval,
+        d_const.get(),
+        d_w.get(),
+        d_sigma.get(),
+        d_zp.get(),
+        d_zn.get(),
+        d_gate.get(),
+        d_k.get(),
+        d_beta.get(),
+        d_gamma.get(),
+        d_alpha.get(),
+        d_zh_inv_p.get(),
+        d_zh_eval.get(),
         1ULL << deg_log,
-        reinterpret_cast<uint64_t *>(d_qvals));
+        d_qvals.get());
     CUDA_OK(cudaGetLastError());
 
     NTT_Config inv_cfg = {};
@@ -562,26 +576,18 @@ RustError compute_quotient_polys_lde_pointers_gl64(
     inv_cfg.salt_size = 0;
 
     RustError ierr =
-        ntt::batch_ntt(gpu, reinterpret_cast<fr_t *>(d_qvals), (uint32_t)lde_q_log, inverse, inv_cfg);
+        ntt::batch_ntt(gpu, reinterpret_cast<fr_t *>(d_qvals.get()), (uint32_t)lde_q_log, inverse, inv_cfg);
     if (ierr.code != 0) {
-        free_all();
         return ierr;
     }
 
     CUDA_OK(cudaMemcpyAsync(
         d_out_quotient_coeffs,
-        d_qvals,
+        d_qvals.get(),
         (size_t)nc * lde_q * sizeof(uint64_t),
         cudaMemcpyDeviceToDevice,
         stream));
     CUDA_OK(cudaStreamSynchronize(stream));
-
-    } catch (...) {
-        free_all();
-        throw;
-    }
-
-    free_all();
     return RustError{0};
 }
 
