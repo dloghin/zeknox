@@ -28,17 +28,6 @@ using fr_t = gl64_t;
 
 namespace {
 
-struct cuda_u64_deleter {
-    void operator()(uint64_t *p) const noexcept
-    {
-        if (p) {
-            (void)cudaFree((void *)p);
-        }
-    }
-};
-
-using unique_u64 = std::unique_ptr<uint64_t, cuda_u64_deleter>;
-
 __device__ inline size_t d_rev_bits(size_t val, size_t bit_count)
 {
     size_t result = 0;
@@ -94,6 +83,11 @@ __device__ void d_batch_inv_in_place(gl64_t *a, int n)
     }
     a[0] = inv_all;
 }
+
+/* Device compilation pass has no host kernel launches; suppress "never referenced" for __global__. */
+#ifdef __CUDA_ARCH__
+#pragma nv_diag_suppress 177
+#endif
 
 __global__ void gather_quotient_domain_kernel(
     const uint64_t *cs_lde,
@@ -274,9 +268,28 @@ __global__ void quotient_vanishing_reduce_kernel(
     }
 }
 
+#ifdef __CUDA_ARCH__
+#pragma nv_diag_default 177
+#endif
+
 } // namespace
 
 #ifndef __CUDA_ARCH__
+
+namespace {
+
+struct cuda_u64_deleter {
+    void operator()(uint64_t *p) const noexcept
+    {
+        if (p) {
+            (void)cudaFree((void *)p);
+        }
+    }
+};
+
+using unique_u64 = std::unique_ptr<uint64_t, cuda_u64_deleter>;
+
+} // namespace
 
 static inline uint32_t host_log2_ceil_u32(uint32_t n)
 {
