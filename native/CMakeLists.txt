@@ -138,6 +138,7 @@ set(LIB_CUDA_SRC
     prover/partial_products.cu
     prover/gate_constraints.cu
     prover/quotient_poly.cu
+    prover/quotient_compute_polys.cu
     prover/fri_fold.cu
     prover/opening_set.cu
     prover/prover.cu)

@@ -200,8 +200,11 @@ mod plonky2;
 #[cfg(feature = "plonky2")]
 mod zkxn_blob;
 
+mod quotient_polys;
+
 #[cfg(feature = "plonky2")]
 pub use plonky2::{gate_type_id, gpu_prove_safe, plonky2_gate_infos};
+pub use quotient_polys::compute_quotient_polys_device_gl64;
 
 #[cfg(feature = "plonky2")]
 pub use zkxn_blob::{
